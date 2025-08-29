@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "httpproto.h": "c",
+        "string": "c",
+        "webserver.h": "c",
+        "array": "c",
+        "string_view": "c"
+    },
+    "makefile.configureOnOpen": true
+}
