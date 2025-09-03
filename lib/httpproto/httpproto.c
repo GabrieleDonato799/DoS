@@ -289,7 +289,7 @@ bool ResponseSend(const HTTPResponse_t * const res, int sockfd){
     }
     Send(sockfd, "\r\n", 2, 0);
 
-    Send(sockfd, res->body->data, strlen(res->body->data), 0);
+    Send(sockfd, res->body->data, res->body->size, 0);
 }
 
 void initResponse(HTTPResponse_t ** res){
@@ -470,10 +470,11 @@ bool HeaderSetValue(HTTPHeader_t * const hdr, const char * const value){
 // char * BodyGetData(const HTTPBody_t *){
 
 // }
-bool BodySetData(HTTPBody_t * body, const char * data){
+bool BodySetData(HTTPBody_t * body, const char * data, const int size){
     if(!body || !data)
         return false;
     body->data = data;
+    body->size = size;
     return true;
 }
 
