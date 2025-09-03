@@ -103,8 +103,9 @@ static HTTPHeader_t * RequestParseHeaderField(const char * line){
     if((end = strstr(start, ": ")) == NULL || end-start <= 0){
         die("RequestParseHeaderField name");
     }
-    hdr->name = (char *)malloc(sizeof(char) * (end-start +1)); // +1 string terminator, set by strncpy
+    hdr->name = (char *)malloc(sizeof(char) * (end-start +1)); // +1 string terminator
     strncpy(hdr->name, start, end-start);
+    hdr->name[end-start] = 0;
     start = end + 2;
     
     // Header value
@@ -113,6 +114,7 @@ static HTTPHeader_t * RequestParseHeaderField(const char * line){
     }
     hdr->value = (char *)malloc(sizeof(char) * (end-start +1));
     strncpy(hdr->value, start, end-start);
+    hdr->value[end-start] = 0;
     
     start = end + 1;
 
@@ -290,6 +292,8 @@ bool ResponseSend(const HTTPResponse_t * const res, int sockfd){
     Send(sockfd, "\r\n", 2, 0);
 
     Send(sockfd, res->body->data, res->body->size, 0);
+
+    free(codeStr);
 }
 
 void initResponse(HTTPResponse_t ** res){
@@ -363,7 +367,14 @@ bool ResponseLineSetProtocol(HTTPResponseLine_t * const resLine, const int versi
     return true;
 }
 
-static bool ResponseLineSetStatusMessage(HTTPResponseLine_t * const resLine, const int code){
+/**
+ * @brief Get the status message of the supplied HTTP error code.
+ * A copy of the error message is allocated and must be freed correctly.
+ * 
+ * @param code 
+ * @return char* 
+ */
+char * getStatusMessage(const int code){
     char * str = NULL, *  copyStr = NULL;
     switch(code){
         case 100: str = "Continue"; break;
@@ -434,7 +445,11 @@ static bool ResponseLineSetStatusMessage(HTTPResponseLine_t * const resLine, con
     copyStr = (char *)malloc((strlen(str) +1)*sizeof(char));
     strcpy(copyStr, str);
 
-    resLine->statusMessage = copyStr;
+    return copyStr;
+}
+
+static bool ResponseLineSetStatusMessage(HTTPResponseLine_t * const resLine, const int code){
+    resLine->statusMessage = getStatusMessage(code);
     
     return true;
 }

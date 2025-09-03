@@ -47,12 +47,13 @@ void logger(const char * functionName, const char * fmt, ...){
 }
 
 char * itoa(int n){
+    char * str = NULL;
+    
     if(n<0) return NULL;
 
-    int size = 12;
-    char * str = (char *)malloc(size);
-
-    sprintf(str, "%d", n);
+    str = (char *)malloc(12); // enough to handle a 32 bit integer with sign
+    if(str)
+        sprintf(str, "%d", n);
 
     return str;
 }

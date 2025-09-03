@@ -1,4 +1,5 @@
 #include "common.h"
+#include "lib/webUtils.h"
 #include "lib/httpproto/httpproto.h"
 #include "switcher.h"
 #include "handlers/webserver/webserver.h"
@@ -162,7 +163,12 @@ void connectionHandler(int client, struct sockaddr *sa, int length) {
   else
     logger("connectionHandler", "Invalid request handler: %p!\n", handler);
 
-  ResponseSend(res, client);
+  if(!res)
+    res = createErrorResponse(501);
+
+  if(!ResponseSend(res, client)){
+    logger("connectionHandler", "Couldn't send the response\n");
+  }
 
   freeRequest(req);
   freeResponse(res);

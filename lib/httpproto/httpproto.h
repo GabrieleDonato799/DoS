@@ -169,6 +169,8 @@ char * RequestLineGetProtocol(HTTPRequestLine_t *);
  */
 bool ResponseLineSetProtocol(HTTPResponseLine_t *, const int);
 
+char * getStatusMessage(const int);
+
 /**
  * @brief Takes a status line and sets the status code.
  * 
