@@ -79,5 +79,6 @@ HTTPResponse_t * webSrvReqHdlr(HTTPRequest_t * req){
 
     logger("webSrvReqHdlr", "Exiting\n");
 
+    free(ep);
     return res;
 }

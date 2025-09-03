@@ -1,9 +1,12 @@
 #include "webUtils.h"
+#include "common.h"
+#include <lib/httpproto/httpproto.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 /**
  * @brief Takes a relative URL path and for the first call, the base directory for public file content.
@@ -72,4 +75,61 @@ char * URLPath2AbsFilePath(const char * const URLPath, const char * const baseDi
  */
 char * getFileContentType(const char * const filename){
     // regex match
+}
+
+/**
+ * @brief Takes an error code and returns an error response.
+ * 
+ * @return HTTPResponse_t *
+ */
+HTTPResponse_t * createErrorResponse(const int errorCode){
+    HTTPResponse_t * res = NULL;
+    HTTPResponseLine_t * resLine = (HTTPResponseLine_t *)calloc(1, sizeof(HTTPResponseLine_t));
+    HTTPBody_t * body = (HTTPBody_t *)calloc(1, sizeof(HTTPBody_t));
+    char * text = (char *)malloc(500*sizeof(char));
+    int rc = 0;
+    
+    logger("createErrorResponse", "Entering\n");
+
+    if(!resLine || !body || !text){
+        logger("createErrorResponse", "Out of memory\n");
+        die("malloc");
+    }
+
+    initResponse(&res);
+
+    // prepare response line
+    if(!ResponseLineSetProtocol(resLine, HTTP_VERSION_1_1))
+        logger("createErrorResponse", "Couldn't set the response' protocol version\n");
+    if(!ResponseLineSetStatusCode(resLine, errorCode))
+        logger("createErrorResponse", "Couldn't set the response' status code\n");
+    if(!ResponseSetResLine(res, resLine))
+        logger("createErrorResponse", "Couldn't set the response' status line\n");
+
+    rc = snprintf(text, 500, "<html><head><title>Dos</title></head><body><p>%s %s</p></body></html>\0", itoa(errorCode), getStatusMessage(errorCode));
+    
+    if(rc < 0)
+        logger("createErrorResponse", "Couldn't create the error response page\n");
+    
+    // headers
+    if(!ResponseAddHeader(res, "Content-Length", itoa(rc)))
+        logger("createErrorResponse", "Couldn't add the response header Content-Length\n");
+    if(!ResponseAddHeader(res, "Content-Type", "text/html"))
+        logger("createErrorResponse", "Couldn't add the response header Content-Type\n");
+    if(!ResponseAddHeader(res, "Server", "Donato's web Server"))
+        logger("createErrorResponse", "Couldn't add the response header Server\n");
+    if(!ResponseAddHeader(res, "Date", generateDateRFC7231()))
+        logger("createErrorResponse", "Couldn't add the response header Date\n");
+    if(!ResponseAddHeader(res, "Connection", "Close"))
+        logger("createErrorResponse", "Couldn't add the response header Connection\n");
+
+    // set body
+    if(!BodySetData(body, text, rc))
+        logger("createErrorResponse", "Couldn't set the response' body data\n");
+    if(!ResponseAddBody(res, body))
+        logger("createErrorResponse", "Couldn't add the body to the response\n");
+
+    logger("createErrorResponse", "Exiting\n");
+
+    return res;
 }
