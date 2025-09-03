@@ -7,6 +7,8 @@
 #define MAX_PATH_LENGTH 256
 #define MAX_METHOD_LENGTH 10
 #define MAX_DATE_HEADER_VALUE_SIZE 200
+// 16 MiB
+#define MAX_RESPONSE_BODY_SIZE 16777216
 #define HTTP_VERSION_1_1 2
 
 typedef struct{
@@ -28,6 +30,7 @@ typedef struct{
 
 typedef struct{
     char * data;
+    int size; // to support binary files
 } HTTPBody_t;
 
 // The headers should be a NULL terminated vector of HTTPHeader_t
@@ -179,10 +182,11 @@ bool HeaderSetValue(HTTPHeader_t *, const char *);
 bool HeaderGetValue(HTTPHeader_t *);
 
 char * BodyGetData(const HTTPBody_t *);
-bool BodySetData(HTTPBody_t *, const char *);
+bool BodySetData(HTTPBody_t *, const char *, const int);
 
 char * EndpointGetPath(const Endpoint_t *);
-char * EndpointGetMethod(const Endpoint_t * );
+
+char * EndpointGetMethod(const Endpoint_t *);
 
 /**
  * @brief Sets the path of the Endpoint_t. Returns false on error, true otherwise.
