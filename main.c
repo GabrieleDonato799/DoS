@@ -3,6 +3,7 @@
 #include "lib/httpproto/httpproto.h"
 #include "switcher.h"
 #include "handlers/webserver/webserver.h"
+#include "handlers/fileserver/fileserver.h"
 #include <arpa/inet.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -65,10 +66,18 @@ int main() {
   atexit(dumpLogs);
 
   // register request handlers
-  const Endpoint_t webEp = {"/index.html", "GET"};
-  const Endpoint_t webEp2 = {"/favicon.ico", "GET"};
-  registerHdlr(&webEp, webSrvReqHdlr);
-  registerHdlr(&webEp2, webSrvReqHdlr);
+  // const Endpoint_t webEp = {"/www/*", "GET"};
+  const Endpoint_t fileEpHEAD = {"/www/*", "HEAD"};
+  const Endpoint_t fileEpGET = {"/www/*", "GET"};
+  const Endpoint_t fileEpPUT = {"/www/*", "PUT"};
+  const Endpoint_t fileEpPOST = {"/www/*", "POST"};
+  const Endpoint_t fileEpDELETE = {"/www/*", "DELETE"};
+  // registerHdlr(&webEp, webSrvReqHdlr);
+  registerHdlr(&fileEpHEAD, fileSrvReqHdlr);
+  registerHdlr(&fileEpGET, fileSrvReqHdlr);
+  registerHdlr(&fileEpPUT, fileSrvReqHdlr);
+  registerHdlr(&fileEpPOST, fileSrvReqHdlr);
+  registerHdlr(&fileEpDELETE, fileSrvReqHdlr);
 
   logger("main", "Server started\n");
 

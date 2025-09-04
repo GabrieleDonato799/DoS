@@ -18,4 +18,6 @@ char * getFileContentType(const char *);
 
 HTTPResponse_t * createErrorResponse(const int);
 
+char * getLastModDate(const char *);
+
 #endif // WEBUTILS_H

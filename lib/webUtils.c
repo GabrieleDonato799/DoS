@@ -7,6 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <sys/stat.h>
 
 /**
  * @brief Takes a relative URL path and for the first call, the base directory for public file content.
@@ -132,4 +133,19 @@ HTTPResponse_t * createErrorResponse(const int errorCode){
     logger("createErrorResponse", "Exiting\n");
 
     return res;
+}
+
+/**
+ * @brief Takes a file and returns its last modified date as a Date header value (RFC 7231).
+ * 
+ */
+char * getLastModDate(const char * const filename){
+    struct stat attr;
+    if (stat(filename, &attr) == -1) {
+        perror("stat");
+        return NULL;
+    }
+
+    // Modification time
+    return timetToDateRFC7231(attr.st_mtime);
 }

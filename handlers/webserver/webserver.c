@@ -1,6 +1,7 @@
 #include "webserver.h"
 #include <common.h>
 #include <lib/webUtils.h>
+#include <lib/httpproto/httpproto.h>
 #include <stdlib.h>
 
 HTTPResponse_t * webSrvReqHdlr(HTTPRequest_t * req){
