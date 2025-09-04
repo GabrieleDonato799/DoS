@@ -81,7 +81,7 @@ handler_t cercaHandler(const struct S_Node * list, const Endpoint_t * sample){
     if(list == NULL) return NULL;
 
     cur = list;
-    while(cur != NULL && EndpointCompare(sample, DictGetKey(&cur->dict)) == 0){
+    while(cur != NULL && EndpointCmpPatternPath(sample, DictGetKey(&cur->dict)) == 0){
         cur = cur->next;
     }
 

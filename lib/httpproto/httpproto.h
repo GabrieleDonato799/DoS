@@ -1,6 +1,7 @@
 #ifndef HTTPPROTO_H
 #define HTTPPROTO_H
 #include <stdbool.h>
+#include <time.h>
 
 #define MAX_REQ_SIZE 8192
 #define MAX_HEADERS 100
@@ -100,6 +101,10 @@ HTTPRequest_t * RequestParse(int);
  */
 Endpoint_t * RequestGetEndpoint(const HTTPRequest_t *);
 
+HTTPBody_t * RequestGetBody(const HTTPRequest_t *);
+
+HTTPHeader_t * RequestFindHeader(const HTTPRequest_t *, const char *);
+
 /**
  * @brief Initializes the fields of a request structure.
  * 
@@ -181,7 +186,9 @@ bool ResponseLineSetStatusCode(HTTPResponseLine_t *, int);
 
 bool HeaderSetName(HTTPHeader_t *, const char *);
 bool HeaderSetValue(HTTPHeader_t *, const char *);
-bool HeaderGetValue(HTTPHeader_t *);
+char * HeaderGetValue(const HTTPHeader_t *);
+
+HTTPHeader_t * HeaderCreate(const char *, const char *);
 
 char * BodyGetData(const HTTPBody_t *);
 bool BodySetData(HTTPBody_t *, const char *, const int);
@@ -210,7 +217,17 @@ bool EndpointSetMethod(Endpoint_t *, const char *);
  * @return true if both the method and path field match
  * @return false otherwise
  */
-bool EndpointCompare(Endpoint_t *, Endpoint_t *);
+bool EndpointCompare(const Endpoint_t *, const Endpoint_t *);
+
+/**
+ * @brief Takes two endpoints and compares them, treating the path of
+ * the first like a pattern for the second, comparing them with
+ * checkPatternPath().
+ * 
+ * @return true if both the method and path field match
+ * @return false otherwise
+ */
+bool EndpointCmpPatternPath(const Endpoint_t *, const Endpoint_t *);
 
 /**
  * @brief Returns a deep copy of the Endpoint_t, allocated on the heap.
@@ -225,10 +242,10 @@ Endpoint_t * EndpointCopy(const Endpoint_t *);
  */
 void EndpointPrint(const Endpoint_t *);
 
-/**
- * @brief Returns a string with the current date formatted for HTTP communications.
- * 
- */
+char * timetToDateRFC7231(const time_t);
+
 char * generateDateRFC7231();
+
+int compareDateRFC7231(const HTTPHeader_t *, const HTTPHeader_t *);
 
 #endif // HTTPPROTO_H

@@ -197,6 +197,42 @@ Endpoint_t * RequestGetEndpoint(const HTTPRequest_t * req){
     return ep;
 }
 
+/**
+ * @brief Returns the body of the request, does not deep copies to prevent significant slowdowns.
+ * 
+ * @param req 
+ * @return HTTPBody_t* 
+ */
+HTTPBody_t * RequestGetBody(const HTTPRequest_t * const req){
+    return req->body;
+}
+
+/**
+ * @brief Tries to find the header with name hdrName inside the request.
+ * Returns a pointer to the matching header.
+ * 
+ * @param req
+ * @param hdrName 
+ * @return HTTPHeader_t* 
+ */
+HTTPHeader_t * RequestFindHeader(const HTTPRequest_t * req, const char * hdrName){
+    HTTPHeader_t * cur = NULL;
+    int cmp;
+    
+    if(!req || !req->headers || !hdrName) return NULL;
+
+    cur = req->headers;
+    while(cur->name != NULL && cur->value != NULL){
+        cmp = strcmp(cur->name, hdrName);
+        if(cmp == 0){
+            break;
+        }
+        cur += 1;
+    }
+
+    return cur;
+}
+
 void initRequest(HTTPRequest_t ** req){
     if(!req) die("initRequest: Invalid pointer\n");
     if(!*req)
@@ -291,7 +327,8 @@ bool ResponseSend(const HTTPResponse_t * const res, int sockfd){
     }
     Send(sockfd, "\r\n", 2, 0);
 
-    Send(sockfd, res->body->data, res->body->size, 0);
+    if(res->body)
+        Send(sockfd, res->body->data, res->body->size, 0);
 
     free(codeStr);
 }
@@ -482,9 +519,33 @@ bool HeaderSetValue(HTTPHeader_t * const hdr, const char * const value){
     return true;
 }
 
-// char * BodyGetData(const HTTPBody_t *){
+char * HeaderGetValue(const HTTPHeader_t * const hdr){
+    return hdr->value;
+}
 
-// }
+HTTPHeader_t * HeaderCreate(const char * name, const char * value){
+    HTTPHeader_t * hdr = (HTTPHeader_t *)malloc(sizeof(HTTPHeader_t));
+
+    if(!name || !value) return NULL;
+
+    HeaderSetName(hdr, name);
+    HeaderSetValue(hdr, value);
+
+    return hdr;
+}
+
+/**
+ * @brief Returns a pointer to the data of the body, doesn't deep copy to prevent slowdowns.
+ * Returns NULL on error.
+ * 
+ * @param body 
+ * @return char* 
+ */
+char * BodyGetData(const HTTPBody_t * body){
+    if(!body) return NULL;
+    return body->data;
+}
+
 bool BodySetData(HTTPBody_t * body, const char * data, const int size){
     if(!body || !data)
         return false;
@@ -549,10 +610,52 @@ bool EndpointSetPath(Endpoint_t *ep, const char *path){
     return true;
 }
 
-bool EndpointCompare(Endpoint_t *A, Endpoint_t *B){
+
+/**
+ * @brief Takes a pattern and a URL path.
+ * Returns whether the pattern matches the URL path.
+ * Use '*' to match everything after a point, for example the pattern "/example/*"
+ * matches the patterns: "/example/", "/example/a", "/example/veryverylong/short".
+ * Only the first '*' is used for comparison. 
+ * 
+ * @return true 
+ * @return false 
+ */
+static bool checkPatternPath(const char * const pattern, const char * const path){
+    char * star = NULL;
+    int res = false;
+    int N = 0;
+
+    // Check which string is starred
+    star = strchr(pattern, '*');
+
+    if(star){
+        N = star - pattern;
+
+        printf("path %s, pattern %s, star %s, N %d\n", path, pattern, star, N);
+        printf("%d\n", res = strncmp(path, pattern, N));
+    }
+    else{
+        return strcmp(pattern, path) == 0;
+    }
+
+    return false;
+}
+
+bool EndpointCompare(const Endpoint_t * const A, const Endpoint_t * const B){
     if(
         strcmp(A->method, B->method) == 0 &&
         strcmp(A->path, B->path) == 0
+    )
+        return true;
+    else
+        return false;
+}
+
+bool EndpointCmpPatternPath(const Endpoint_t * const A, const Endpoint_t * const B){
+    if(
+        strcmp(A->method, B->method) == 0 &&
+        checkPatternPath(A->path, B->path) == 0
     )
         return true;
     else
@@ -576,25 +679,73 @@ void EndpointPrint(const Endpoint_t * const ep){
     printf("ep->method: %s\nep->path: %s\n", ep->method, ep->path);
 }
 
-char * generateDateRFC7231(){
-    char * outstr = NULL;
-    time_t t;
+/**
+ * @brief Takes a time_t and returns a string of a RFC7231 compliant Date header value. 
+ * 
+ * @param t 
+ * @return char* 
+ */
+char * timetToDateRFC7231(const time_t t){
+    char * outstr = (char *)malloc(MAX_DATE_HEADER_VALUE_SIZE*sizeof(char));
     struct tm *tmp;
 
-    outstr = (char *)malloc(MAX_DATE_HEADER_VALUE_SIZE*sizeof(char));
-
-    t = time(NULL);
     tmp = gmtime(&t);
     if (tmp == NULL) {
-        logger("generateDateHdr", "Error retrieving localtime (gmtime)\n");
+        logger("timetToDateRFC7231", "Error retrieving localtime (gmtime)\n");
         return NULL;
     }
 
     if (strftime(outstr, MAX_DATE_HEADER_VALUE_SIZE, "%a, %d %b %Y %T GMT", tmp) == 0) {
-        logger("generateDateHdr", "strftime returned 0\n");
+        logger("timetToDateRFC7231", "strftime returned 0\n");
         return NULL;
     }
 
-    logger("generateDateHdr", "Result string is \"%s\"\n", outstr);
+    logger("timetToDateRFC7231", "Result string is \"%s\"\n", outstr);
+
     return outstr;
+}
+
+/**
+ * @brief Returns a string with the current date formatted for HTTP communications.
+ * 
+ */
+char * generateDateRFC7231(){
+    char * outstr = NULL;
+    time_t t;
+
+    t = time(NULL);
+    outstr = timetToDateRFC7231(t);
+
+    return outstr;
+}
+
+/**
+ * @brief Compares two Date headers values.
+ * If the first date is less than the second, returns -1.
+ * If the dates are equal, returns 0;
+ * If the first date is greater than the second, returns 1.
+ * 
+ * @param A 
+ * @param B 
+ * @return int 
+ */
+int compareDateRFC7231(const HTTPHeader_t * const A, const HTTPHeader_t * const B){
+    struct tm tmA, tmB;
+    char * valA, *valB;
+    time_t tA, tB;
+
+    if(!A || !B) return NULL;
+
+    valA = HeaderGetValue(A);
+    valB = HeaderGetValue(B);
+
+    memset(&tmA, 0, sizeof(tmA));
+    memset(&tmB, 0, sizeof(tmB));
+    strptime(valA, "%a, %d %b %Y %T GMT", &tmA);
+    strptime(valB, "%a, %d %b %Y %T GMT", &tmB);
+
+    tA = mktime(&tmA);
+    tB = mktime(&tmB);
+    
+    return (tA < tB ? -1 : (tA == tB ? 0 : -1));
 }
