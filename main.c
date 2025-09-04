@@ -131,6 +131,12 @@ void handle_signal(int signum) {
   switch(signum){
     case SIGINT:
     case SIGTERM:
+    {
+      killChildren();
+      logger("handle_signal", "exit(EXIT_SUCCESS)\n");
+      exit(EXIT_SUCCESS);
+    }
+    break;
     case SIGCHLD:
     {
       killChildren();

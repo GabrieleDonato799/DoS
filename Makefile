@@ -14,6 +14,7 @@ $(OBJDIR)/%.o: %.c
 	$(CC) $(ARGS) -c $< -o $@ -lm
 
 main: clean $(OBJS)
+	@mkdir ./bin || exit 0
 	$(CC) $(ARGS) $(OBJS) -o $(BINDIR)/main.app -lm
 
 run: main
