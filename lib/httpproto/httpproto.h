@@ -76,7 +76,7 @@ void printHTTPRequestLine(HTTPRequestLine_t *);
  * @return HTTPHeader_t 
  */
 // static HTTPHeader_t * RequestParseHeaderField(const char *);
-// static HTTPBody_t * RequestRecvBody(HTTPHeader_t);
+// static HTTPBody_t * RequestReadBody(HTTPHeader_t);
 
 /**
  * @brief Takes the client socket file descriptor, receives, parses and returns the request.

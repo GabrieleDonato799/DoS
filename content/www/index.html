@@ -1,11 +1,94 @@
 <html>
+    <head>
+        <title>Dos</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-LN+7fdVzj6u52u30Kp6M/trliBMCMKTyK833zpbD+pXdCLuTusPj697FH4R/5mcr" crossorigin="anonymous">
+    </head>
 
-<head>
-    <title>Dos</title>
-</head>
+    <body>
+        <h1>Welcome to Donato's web Server!</h1>
+        <div class="container">
+            <div class="row">
+                <div class="col">
+                    <form id="reqForm" action="#">
+                        <label for="selectMethod" class="form-label">Select method</label>
+                        <label class="form-label">Destination Path</label>
+                        <input type="text" name="dstPath" value="/" class="form-control"><br>
+                        <select id="selectMethod" name="method">
+                            <option value="POST">POST</option>
+                            <option value="GET" selected>GET</option>
+                            <option value="HEAD">HEAD</option>
+                            <option value="PUT">PUT</option>
+                            <option value="DELETE">DELETE</option>
+                        </select class="form-control"><br>
+                        <label class="form-label">Body data</label>
+                        <input type="text" name="bodyData" value="" class="form-control"><br>
+                        <button type="button" name="submit" onclick="send(); return false;" class="btn btn-primary">Submit</button>
+                    </form>
+                </div>
+                <div class="col">
+                    <div id="responseCont">
 
-<body>
-    <p>Welcome to Donato's web Server!</p>
-</body>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.bundle.min.js" integrity="sha384-ndDqU0Gzau9qJ1lfW4pNLlhNTkCfHzAVBReH9diLvGRem5+R9g2FzA8ZGN954O5Q" crossorigin="anonymous"></script>
+    <script>
+        function send(){
+            let form = document.getElementById("reqForm")
+            let select = document.getElementById("selectMethod")
+            let responseCont = document.getElementById("responseCont")
+            let baseURL = "http://localhost:3456/"
+            let dstPath = document.getElementsByName("dstPath")[0].value
+            let bodyData = document.getElementsByName("bodyData")[0].value
+
+            let optionsGET = {
+                // credentials: 'include',
+                method: 'GET',
+                header: {
+                    "Content-Type": "application/text"
+                }
+            }
+
+            console.log(select.value);
+            console.log(typeof(bodyData));
+
+            switch(select.value){
+                case "POST":
+                    optionsGET.method = "POST"
+                    optionsGET.body = bodyData
+                break
+                case "GET":
+                break
+                case "HEAD":
+                    optionsGET.method = "HEAD"
+                break
+                case "PUT":
+                    optionsGET.method = "PUT"
+                    optionsGET.body = bodyData
+                break
+                case "DELETE":
+                    optionsGET.method = "DELETE"
+                break
+            }
+
+            fetch(`${baseURL}${dstPath}`, optionsGET)
+                .then(response => {
+                    console.log(response);
+                    responseCont.innerText = `${response.status} ${response.statusText}\n`
+
+                    for(let hdr of response.headers){
+                        responseCont.innerText += `${hdr}\n`
+                    }
+                    responseCont.innerText += `\n`
+                    response.text()
+                        .then(text => {
+                            responseCont.innerText += `${text}`
+                        })
+                })
+                .catch(_ => {console.error(_)})
+        }
+    </script>
 </html>

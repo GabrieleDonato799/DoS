@@ -1,5 +1,5 @@
 CC=gcc
-ARGS=-Wall -pedantic -I. -g -O0
+ARGS=-Wall -pedantic -I. -g
 OBJDIR=./obj
 BINDIR=./bin
 
@@ -14,9 +14,18 @@ $(OBJDIR)/%.o: %.c
 	$(CC) $(ARGS) -c $< -o $@ -lm
 
 main: clean $(OBJS)
-	$(CC) $(ARGS) $(OBJS) -o $(BINDIR)/main.app -lm
+	@mkdir ./bin || exit 0
+	$(CC) $(ARGS) -O3 $(OBJS) -o $(BINDIR)/main.app -lm
 
-run: main
+dbg: clean $(OBJS)
+	@mkdir ./bin || exit 0
+	$(CC) $(ARGS) -O0 $(OBJS) -o $(BINDIR)/main.app -lm
+
+addrsan: clean $(OBJS)
+	@mkdir ./bin || exit 0
+	$(CC) $(ARGS) -O0 -fsanitize=address $(OBJS) -o $(BINDIR)/main.app -lm
+
+run:
 	./bin/main.app
 
 clean:
