@@ -3,7 +3,7 @@ C server with sockets implementing the HTTP/1.1 protocol and file handling servi
 
 Student: Gabriele Donato, Matriculation number: 31884A
 
-## Configuration
+# Configuration
 To get started:
 ```bash
 git clone https://github.com/GabrieleDonato799/DoS.git
@@ -44,11 +44,33 @@ project/
 
 To configure the services or the main server software, a basic internal configuration API is present.
 
-### Required privileges
+# Requirements analysis
+
+| Functional requirement                                                                 | Priority |
+| -------------------------------------------------------------------------------------- | -------- |
+| Concurrent server implementation with fork()                                           | 1        |
+| HTTP request parsing                                                                   | 1        |
+| HTTP response building                                                                 | 1        |
+| Support for the following HTTP headers: Host, Content-Length, Date, Server, Connection | 2        |
+| Converting between the HTTP Date header value format and a C date format               | 2        |
+| Support for the following HTTP methods: GET/HEAD, PUT, POST, DELETE                    | 3        |
+| Basic cookie retrieval (Cookie header) and setting (Set-Cookie header)                 | 4        |
+| Basic negotiation capabilities with Accept and Content-Type                            | 4        |
+| A file handling service to manage files under a specific directory                     | 5        |
+| Files specified in the path of the URL of the HTTP request                             | 5        |
+| Conditional GET requests, linked to the last modification time of the files            | 5        |
+| Persistent TCP connections with keepalive, Connection header field                     | 6        |
+
+| Non-functional requirement           | Priority |
+| ------------------------------------ | -------- |
+| Prevent path traversal with chroot() | 6        |
+
+
+## Required privileges
 The server is executed as a normal user, running it under a dedicated user is recommended. The server will only bind not well-known ports. Services must have the necessary file system permissions and should follow the principle of least privilege.
-## Architecture
-### Concurrent server implementation with fork()
-#### Components and Responsibilities
+# Architecture
+## Concurrent server implementation with fork()
+### Components and Responsibilities
 The *listening process*:  
 receives connections from the clients and delegates their handling to worker processes. Configures the switching logic by binding endpoints to the request handlers.
 
@@ -80,23 +102,108 @@ flowchart TD
     B-->F
     F-->A
 ```
+Follow the important code fragments of the listening process:
+
+```C
+int main() {
+  int server = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+  
+  // local socket setup...
+  // listen to incoming connections ...
+  // registering custom signal handlers to prevent child zombies when exiting...
+
+  // register request handlers for the file service
+  const Endpoint_t fileEpDELETE = {"/www/*", "DELETE"};
+  registerHdlr(&fileEpDELETE, fileSrvReqHdlr);
+  // ...
+
+  logger("main", "Server started\n");
+
+  while (1) {
+    int s;
+    if ((s = accept(server, (struct sockaddr *)&saddr, &size_saddr)) >= 0) {
+      pid_t pid;
+
+      logger("main", "Client connected!\n");
+      if ((pid = fork()) < 0) { // error
+        die("fork");
+      } else if (pid == 0) { // son
+        logger("main", "I've been forked!\n");
+        // sockets handling & communications
+        close(server);
+        connectionHandler(s, (struct sockaddr *)&s, sizeof(s));
+        close(s);
+        
+        logger("main", "Client disconnected!\n");
+        exit(EXIT_SUCCESS);
+      } else { // father
+        close(s);
+      }
+    }
+  }
+
+  return 0;
+}
+```
 Follows the operations a worker process does when handling a single request.
 ```mermaid
 flowchart TD
     subgraph worker [worker process]
+		direction TB
 	    K["Parse the request to extract the endpoint"]
 	    G["The request switch logic returns the correct request handler"]
 	    H["The handler builds the response"]
 	    L["Sends the response"]
-	    I["Die on<br>- unrecoverable error<br>- closed connection<br>- connection timeout<br>- parsing errors"]
     end
 
     K-->|"switcher( Endpoint )"|G
     G-->|"handler( ParsedRequest )"|H
     H-->L
 ```
+Notice that the worker process can die on the following events:
+- unrecoverable error
+- closed connection
+- connection timeout
+- parsing errors
+
+Follow the important code fragments of the connection handling logic:
+```C
+void connectionHandler(int client, struct sockaddr *sa, int length) {
+  HTTPRequest_t * req = NULL;
+  HTTPResponse_t * res = NULL;
+  Endpoint_t * ep = NULL;
+  handler_t handler = NULL;
+
+  // Restore signal handlers
+  // ...
+
+  // logging to a per worker file
+  // ... output redirection
+  
+  req = RequestParse(client);
+  ep = RequestGetEndpoint(req);
+    
+  handler = switcher(ep);
+  if(handler)
+    res = handler(req);
+  else
+    logger("connectionHandler", "Invalid request handler: %p!\n", handler);
+
+  if(!res)
+    res = createErrorResponse(501);
+
+  if(!ResponseSend(res, client)){
+    logger("connectionHandler", "Couldn't send the response\n");
+  }
+
+  freeRequest(req);
+  freeResponse(res);
+
+  return;
+}
+```
 To distinguish between requests for different services, a request handler is bound to an endpoint.
-####  Shared abstract data types
+###  Shared abstract data types
 The endpoint to which the request handler is bound is not dependent on the service configuration itself, but depends on the server software configuration.
 The scheme, host, port and path on which the service must be exposed are determined by the listening server process, on startup, long before a request handler receives data. Thus every request is handled with the same configuration.
 ```mermaid
@@ -138,7 +245,7 @@ classDiagram
     }
 ```
 
-#### Switching logic
+### Switching logic
 The switcher() returns a handler function exported by the request handler's module. The switching logic:
 	- Determines which handler must receive the request, by comparing the endpoint to those of the bound handlers.
 	- Simply returns the handler reference to the worker process (to enforce the principle of single responsibility).
@@ -185,14 +292,14 @@ sequenceDiagram
 		
 	end
 ```
-### Requests parsing and response building
+## Requests parsing and response building
 The software can exclusively handle URLs in [origin form](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Messages#request_targets) (relative path to the Host header field).
 A request handler needs the method to determine the type of action and the path to determine the target resource.
 The request handler builds the response using the HTTPResponse primitives. Compares them by checking if they have the same path and method.
 The HTTPRequest has a parse() primitive, for the worker process to parse it.
 The HTTPResponse has a send() primitive, to hide the details of the transmission.
 
-#### HTTP specific abstract data types
+### HTTP specific abstract data types
 Objects are copied whenever possible.
 ```mermaid
 ---
@@ -302,6 +409,47 @@ flowchart TD
 	E-->G
 	G-->H
 ```
+
+Follow the important code fragments of parser logic:
+```C
+HTTPRequest_t * RequestParse(int client){
+    char * line;
+    int curHdr = 0;
+  
+    HTTPRequest_t * req = NULL;
+    HTTPRequestLine_t * reqLine = NULL;
+    HTTPHeader_t * headers = NULL; // NULL terminated
+ 
+    initRequest(&req);
+
+    headers = (HTTPHeader_t *)calloc(MAX_HEADERS +1, sizeof(HTTPHeader_t));
+    
+    reqLine = RequestParseReqLine(HTTPRequestReadLine(client));
+  
+    // parse the headers
+    while((line = HTTPRequestReadLine(client)) != NULL){
+      // reached empty line separating headers from body
+      if(strcmp("", line) == 0){
+        break;
+      }
+  
+      if(curHdr < MAX_HEADERS){
+        headers[curHdr++] = *RequestParseHeaderField(line);
+      }
+      else{
+        die("413 (Too many headers)");
+      }
+    }
+  
+    // assemble the request
+    req->reqLine = reqLine;
+    req->headers = headers;
+  
+    logger("RequestParse", "Exiting\n");  
+
+    return req;
+}
+```
 The readline() primitive abstracts away the details of the TCP connection stream and memory allocation and management of the receiver's buffer.
 ```mermaid
 ---
@@ -329,14 +477,61 @@ flowchart TD
 	K-->|Yes|L
 	K-->|No|B
 ```
+Here is the code fragment of the readLine primitive:
+
+```C
+static char * HTTPRequestReadLine(int sockfd){
+	// create a full sized request buffer
+    static char buff[2*MAX_REQ_SIZE] = {};
+    static int recvN = 0; // how many bytes have been received
+    static char * start = buff, * end = buff;
+    char * newStr = NULL;
+    int moved;
+
+    buff[MAX_REQ_SIZE] = 0;
+
+    switch ((moved = recv(sockfd, buff, MAX_REQ_SIZE, MSG_DONTWAIT))) {
+        case -1:
+            if(errno == EAGAIN)
+                ;
+            else
+                die("recv");
+        break;
+    }
+
+    recvN += moved;
+    if(recvN > MAX_REQ_SIZE){
+        // TODO: send back a 413 Content Too Large
+        die("413 Content Too Large");
+    }
+    
+    // Find the EOL
+    if((end = strstr(start, "\r\n")) == NULL){
+        die("strstr(start, \"\\r\\n\")");
+    }
+
+    if(end > buff + MAX_REQ_SIZE){
+        end = buff + MAX_REQ_SIZE;
+    }
+
+    if(end-start > 0){
+        newStr = (char *)malloc(sizeof(char)*(end-start +3));
+        strncpy(newStr, start, end-start +2); // +2 keeps \r\n
+        newStr[end-start +2] = 0;
+        start = end +2; // skip the \r\n
+    }
+
+    return newStr;
+}
+```
 ## Cookies
 The server provides primitives to set and restore http headers. The usage of cookies is left to the specific request handler implementation.
 
 ## Services
 Every service must be organized in a module that exports the required functionality.
-The service are configured at startup by the listening process, by passing the endpoint configuration of the request handler to the switching logic.
+The services are configured at startup by the listening process, by passing the endpoint configuration of the request handler to the switching logic.
 
-#### URL's path to folder path translation
+### URL's path to folder path translation
 The translation of an URL's path to a folder path to access the actual document it is as follows:
 ```mermaid
 ---
@@ -356,11 +551,61 @@ flowchart TD
 	D-->|no|E
 	D-->|yes|F
 ```
+The logic has been implemented as follows:
 
-### Web server service
+```C
+char * URLPath2AbsFilePath(const char * const URLPath, const char * const baseDir){
+    static char * _baseDir = NULL;
+    char fullFsPath[MAX_PATH_LENGTH] = {};
+    char * canonicalFullFsPath = NULL;
+
+    if(!URLPath) return NULL;
+
+    if(baseDir){
+        // use the absolute path
+        _baseDir = realpath(baseDir, NULL);
+    }
+    // check if the path has been set at least once
+    if(!_baseDir){
+        logger("URLPath2AbsFilePath", "realpath\n"); perror("");
+        return NULL;
+    }
+
+    if(strlen(_baseDir)+strlen(URLPath) > MAX_PATH_LENGTH){
+        logger("URLPath2AbsFilePath", "File path is too large\n"); perror("");
+        return NULL;
+    }
+
+    strcat(fullFsPath, _baseDir);
+    strcat(fullFsPath, URLPath);
+
+    // check if it is a path traversal
+    canonicalFullFsPath = realpath(fullFsPath, NULL);
+    if(!canonicalFullFsPath){
+        logger("URLPath2AbsFilePath", "Invalid canonical absolute path, does the resource exists?\n"); perror("");
+        return NULL;
+    }
+    if(strlen(canonicalFullFsPath) > MAX_PATH_LENGTH){
+        logger("URLPath2AbsFilePath", "Canonical absolute file path is too large\n"); perror("");
+        return NULL;
+    }
+    if(
+        memcmp(canonicalFullFsPath, _baseDir,
+        MIN(strlen(canonicalFullFsPath), strlen(_baseDir)))
+    )
+    {
+        logger("URLPath2AbsFilePath", "Path traversal detected!\n"); perror("memcmp or strlen\n");
+        return NULL;
+    }
+
+    return canonicalFullFsPath;
+}
+```
+
+## Web server service
 Exposes a public directory of web documents. Every file is a resource accessible from a specific path under the particular exposed folder, which is verified by the URL path translation logic.
 
-### File service
+## File service
 This service exposes files for creation (POST), retrieval (GET/HEAD), edit (PUT), deletion (DELETE). Files are specified in the URL's path of the request.
 ```mermaid
 flowchart TD
@@ -374,5 +619,12 @@ flowchart TD
 	D-->E
 ```
 
-#### Browser caching
+### Browser caching
 The file server tells the browser to cache a file for one hour as an example. It also provides the Last-Modified header, linked to the last modification time of the files.
+
+
+An example is the following image I requested for a second time a resource and the server responded correctly with a `304 Not Modified` response.  
+<img width="809" height="755" alt="304_cached_response" src="https://github.com/user-attachments/assets/d24036e2-cc2c-45b5-a6d6-182c08df15da" />
+
+Instead, this is a subsequent request with the disabled browser cache.  
+<img width="809" height="741" alt="200_non_cached_response" src="https://github.com/user-attachments/assets/5eaba6d0-fb7c-4cad-b71a-0d6276e24b2e" />
