@@ -58,7 +58,7 @@ HTTPResponse_t * fileSrvReqHdlr(HTTPRequest_t * req){
         HTTPHeader_t * lastModDate = HeaderCreate("Last-Modified", getLastModDate(reqDoc));
 
         // browser caching
-        if(compareDateRFC7231(lastModDate, ifModSince) <= 0){
+        if(ifModSince && compareDateRFC7231(lastModDate, ifModSince) <= 0){
             free(res);
             free(ep);
             res = createErrorResponse(304);
@@ -102,7 +102,7 @@ HTTPResponse_t * fileSrvReqHdlr(HTTPRequest_t * req){
         HTTPHeader_t * lastModDate = HeaderCreate("Last-Modified", getLastModDate(reqDoc));
 
         // browser caching
-        if(compareDateRFC7231(lastModDate, ifModSince) <= 0){
+        if(ifModSince && compareDateRFC7231(lastModDate, ifModSince) <= 0){
             free(res);
             free(ep);
             res = createErrorResponse(304);

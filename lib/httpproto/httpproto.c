@@ -209,7 +209,7 @@ HTTPBody_t * RequestGetBody(const HTTPRequest_t * const req){
 
 /**
  * @brief Tries to find the header with name hdrName inside the request.
- * Returns a pointer to the matching header.
+ * Returns a pointer to the matching header, returns NULL if the header is not present or if an error occurs.
  * 
  * @param req
  * @param hdrName 
@@ -230,7 +230,10 @@ HTTPHeader_t * RequestFindHeader(const HTTPRequest_t * req, const char * hdrName
         cur += 1;
     }
 
-    return cur;
+    if(cur->name && cur->value)
+        return cur;
+    else
+        return NULL;
 }
 
 void initRequest(HTTPRequest_t ** req){
