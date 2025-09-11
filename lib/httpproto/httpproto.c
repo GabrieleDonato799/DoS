@@ -590,8 +590,9 @@ char * EndpointGetPath(const Endpoint_t * const ep){
 
     if(!ep) return NULL;
 
-    copy = (char *)malloc(strlen(ep->path)*sizeof(char));
-    strcpy(copy, ep->path);
+    copy = (char *)malloc((strlen(ep->path) +1)*sizeof(char));
+    copy[strlen(ep->path)] = '\0';
+    strncpy(copy, ep->path, strlen(ep->path));
 
     return copy;
 }
@@ -607,8 +608,9 @@ char * EndpointGetMethod(const Endpoint_t * const  ep){
 
     if(!ep) return NULL;
 
-    copy = (char *)malloc(strlen(ep->method)*sizeof(char));
+    copy = (char *)malloc((strlen(ep->method) +1)*sizeof(char));
     strcpy(copy, ep->method);
+    copy[strlen(ep->method)] = '\0';
 
     return copy;
 }

@@ -14,10 +14,15 @@
 #include <sys/types.h>
 #include <wait.h>
 #include <signal.h>
+#include <sys/time.h>
+#include <fcntl.h>
+
 
 #define LISTEN_PORT 3456
 #define MAXLEN 255
 #define MAX_CONNS 10
+// number of seconds to wait for a recv or send to succeed
+#define MAX_COMMS_TIMEOUT 10
 
 int moved;
 
@@ -85,6 +90,14 @@ int main() {
     int s;
     if ((s = accept(server, (struct sockaddr *)&saddr, &size_saddr)) >= 0) {
       pid_t pid;
+      struct timeval tv;
+
+      // set a maximum receive and send timeout
+      tv.tv_sec = MAX_COMMS_TIMEOUT;
+      tv.tv_usec = 0;
+
+      setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+      setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
       logger("main", "Client connected!\n");
       if ((pid = fork()) < 0) { // error
@@ -179,7 +192,7 @@ void connectionHandler(int client, struct sockaddr *sa, int length) {
     logger("connectionHandler", "Invalid request handler: %p!\n", handler);
 
   if(!res)
-    res = createErrorResponse(501);
+    res = createErrorResponse(500);
 
   if(!ResponseSend(res, client)){
     logger("connectionHandler", "Couldn't send the response\n");

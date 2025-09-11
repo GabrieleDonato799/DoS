@@ -2,11 +2,32 @@
 #include <common.h>
 #include <lib/webUtils.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #define DEF_CACHING_TIME 3600
 
+/**
+ * @brief Frees the response and the endpoint, returns a response with the specified status code.
+ * It is meant to be used for alternative return paths like when handling a 404 error.
+ * 
+ * @param res 
+ * @param ep 
+ * @param epMethodName
+ * @param statusCode 
+ * @return HTTPResponse_t* 
+ */
+static HTTPResponse_t * finishCorrectly(HTTPRequest_t *res, Endpoint_t *ep, char * epMethodName, int statusCode){
+    free(res);
+    free(ep);
+    free(epMethodName);
+    res = createErrorResponse(statusCode);
+    return res;
+}
+
 HTTPResponse_t * fileSrvReqHdlr(HTTPRequest_t * req){
     Endpoint_t * ep = NULL;
+    char * epMethodName = NULL;
     HTTPResponse_t * res = NULL;
     HTTPResponseLine_t * resLine = (HTTPResponseLine_t *)calloc(1, sizeof(HTTPResponseLine_t));
     HTTPBody_t * body = NULL;
@@ -15,6 +36,7 @@ HTTPResponse_t * fileSrvReqHdlr(HTTPRequest_t * req){
     FILE * reqDocFile = NULL;
     int reqDocSz = 0;
     bool fileExists = false;
+    struct stat pathStat; // needed to check if it is a directory
     
     logger("fileSrvReqHdlr", "Entering\n");
 
@@ -32,134 +54,117 @@ HTTPResponse_t * fileSrvReqHdlr(HTTPRequest_t * req){
     ep = RequestGetEndpoint(req);
     if(!ep){
         logger("fileSrvReqHdlr", "Invalid endpoint\n");
-        return NULL;
+        return finishCorrectly(res, ep, epMethodName, 404);
     }
     reqDoc = URLPath2AbsFilePath(EndpointGetPath(ep), "./content");
     if(reqDoc == NULL){
         logger("fileSrvReqHdlr", "Invalid file path\n");
-        return NULL;
+        return finishCorrectly(res, ep, epMethodName, 404);
     }
 
-    if(strcmp(EndpointGetMethod(ep), "POST") == 0){
-        body = BodyGetData(RequestGetBody(req));
+    if (stat(reqDoc, &pathStat) == 0) {
+        // check if it is a regular file
+        if (S_ISDIR(pathStat.st_mode)) {
+            return finishCorrectly(res, ep, epMethodName, 404); // directories are not supported
+        } else if(S_ISREG(pathStat.st_mode)){
+            ; // fine
+        } else{ // special files are not meant to be manageable
+            return finishCorrectly(res, ep, epMethodName, 404);
+        }
+    }
+
+    epMethodName = EndpointGetMethod(ep);
+
+    // per method behaviour
+    if(strcmp(epMethodName, "POST") == 0){
+        body = RequestGetBody(req);
 
         reqDocFile = fopen(reqDoc, "wb");
         if(!reqDocFile){
             logger("fileSrvReqHdlr", "Couldn't open the requested file\n"); perror("fopen");
-            return NULL;
+            return finishCorrectly(res, ep, epMethodName, 500);
         }
         if(body)
             fwrite(body->data, sizeof(char), body->size, reqDocFile);
         fclose(reqDocFile);
     }
-    else if(strcmp(EndpointGetMethod(ep), "HEAD") == 0){
+    else if(strcmp(epMethodName, "HEAD") == 0 || strcmp(epMethodName, "GET") == 0){
         // Check if the If-Modified-Since request header is present
+        time_t lastModDateRFC7231 = getLastModDate(reqDoc);
         HTTPHeader_t * ifModSince = RequestFindHeader(req, "If-Modified-Since");
-        HTTPHeader_t * lastModDate = HeaderCreate("Last-Modified", getLastModDate(reqDoc));
+        HTTPHeader_t * lastModDate = HeaderCreate("Last-Modified", timetToDateRFC7231(lastModDateRFC7231));
 
         // browser caching
         if(ifModSince && compareDateRFC7231(lastModDate, ifModSince) <= 0){
-            free(res);
-            free(ep);
-            res = createErrorResponse(304);
-            return res;
+            return finishCorrectly(res, ep, epMethodName, 304);
         }
 
+        // open the file
         reqDocFile = fopen(reqDoc, "rb");
         if(!reqDocFile){
             logger("fileSrvReqHdlr", "Couldn't open the requested file\n"); perror("fopen");
-            free(res);
-            free(ep);
-            res = createErrorResponse(404);
-            return res;
+            return finishCorrectly(res, ep, epMethodName, 404);
         }
-
+        
         // get file size
         fseek(reqDocFile, 0L, SEEK_END);
         reqDocSz = ftell(reqDocFile);
         rewind(reqDocFile);
-
+        
         if(reqDocSz > MAX_RESPONSE_BODY_SIZE){
             logger("fileSrvReqHdlr", "Request file is too big\n");
             return NULL;
         }
+        
+        // GET specific behaviour 
+        if(strcmp(epMethodName, "GET") == 0){
+            // set body
+            text = (char *)malloc(reqDocSz*sizeof(char));
+            int read = 0;
+            if((read = fread(text, sizeof(char), reqDocSz, reqDocFile)) != reqDocSz){
+                if(ferror(reqDoc)){
+                    logger("fileSrvReqHdlr", "Couldn't read the request file\n");
+                    return finishCorrectly(res, ep, epMethodName, 500);
+                }
+            }
+            logger("fileSrvReqHdlr", "read: %d\n", read);
+            body = (HTTPBody_t *)calloc(1, sizeof(HTTPBody_t));
 
-        fclose(reqDocFile);
-
-        // file specific headers
-        if(!ResponseAddHeader(res, "Content-Length", 0))
-            logger("fileSrvReqHdlr", "Couldn't add the response header Content-Length\n");
-        if(!ResponseAddHeader(res, "Last-Modified", HeaderGetValue(lastModDate)))
-            logger("fileSrvReqHdlr", "Couldn't add the response header Date\n");
-        if(!ResponseAddHeader(res, "Expires", timetToDateRFC7231(time(NULL)+DEF_CACHING_TIME)))
-            logger("fileSrvReqHdlr", "Couldn't add the response header Expires\n");
-        if(!ResponseAddHeader(res, "Cache-Control", "public, max-age=3600"))
-            logger("fileSrvReqHdlr", "Couldn't add the response header Cache-Control\n");
-    }
-    else if(strcmp(EndpointGetMethod(ep), "GET") == 0){
-        // Check if the If-Modified-Since request header is present
-        HTTPHeader_t * ifModSince = RequestFindHeader(req, "If-Modified-Since");
-        HTTPHeader_t * lastModDate = HeaderCreate("Last-Modified", getLastModDate(reqDoc));
-
-        // browser caching
-        if(ifModSince && compareDateRFC7231(lastModDate, ifModSince) <= 0){
-            free(res);
-            free(ep);
-            res = createErrorResponse(304);
-            return res;
+            if(!BodySetData(body, text, reqDocSz))
+                logger("fileSrvReqHdlr", "Couldn't set the response' body data\n");
+            if(!ResponseAddBody(res, body))
+                logger("fileSrvReqHdlr", "Couldn't add the body to the response\n");
+            
+            fclose(reqDocFile);
         }
-
-        body = (HTTPBody_t *)calloc(1, sizeof(HTTPBody_t));
-        reqDocFile = fopen(reqDoc, "rb");
-        if(!reqDocFile){
-            logger("fileSrvReqHdlr", "Couldn't open the requested file\n"); perror("fopen");
-            free(res);
-            free(ep);
-            res = createErrorResponse(404);
-            return res;
+        else{
+            reqDocSz = 0;
         }
-
-        // get file size
-        fseek(reqDocFile, 0L, SEEK_END);
-        reqDocSz = ftell(reqDocFile);
-        rewind(reqDocFile);
-
-        if(reqDocSz > MAX_RESPONSE_BODY_SIZE){
-            logger("fileSrvReqHdlr", "Request file is too big\n");
-            return NULL;
-        }
-
-        // set body
-        text = (char *)malloc(reqDocSz*sizeof(char));
-        int read = 0;
-        if((read = fread(text, sizeof(char), reqDocSz, reqDocFile)) != reqDocSz){
-            if(ferror(reqDocSz))
-            logger("fileSrvReqHdlr", "Couldn't read the request file\n");
-        }
-        logger("fileSrvReqHdlr", "read: %d\n", read);
-        if(!BodySetData(body, text, reqDocSz))
-            logger("fileSrvReqHdlr", "Couldn't set the response' body data\n");
-        if(!ResponseAddBody(res, body))
-            logger("fileSrvReqHdlr", "Couldn't add the body to the response\n");
-        fclose(reqDocFile);
 
         // file specific headers
         if(!ResponseAddHeader(res, "Content-Length", itoa(reqDocSz)))
             logger("fileSrvReqHdlr", "Couldn't add the response header Content-Length\n");
         if(!ResponseAddHeader(res, "Last-Modified", HeaderGetValue(lastModDate)));
             logger("fileSrvReqHdlr", "Couldn't add the response header Last-Modified\n");
-        if(!ResponseAddHeader(res, "Expires", timetToDateRFC7231(time(NULL)+DEF_CACHING_TIME)))
+        if(!ResponseAddHeader(res, "Expires", 
+            timetToDateRFC7231(lastModDateRFC7231+DEF_CACHING_TIME)))
             logger("fileSrvReqHdlr", "Couldn't add the response header Expires\n");
         if(!ResponseAddHeader(res, "Cache-Control", "max-age=3600"))
             logger("fileSrvReqHdlr", "Couldn't add the response header Cache-Control\n");
     }
-    else if(strcmp(EndpointGetMethod(ep), "PUT") == 0){
+    else if(strcmp(epMethodName, "PUT") == 0){
         body = RequestGetBody(req);
 
-        reqDocFile = fopen(reqDoc, "wb");
+        // first check if the file exists, then open it
+        reqDocFile = fopen(reqDoc, "rb");
         if(!reqDocFile){
             logger("fileSrvReqHdlr", "Couldn't open the requested file\n"); perror("fopen");
-            return NULL;
+            return finishCorrectly(res, ep, epMethodName, 404);
+        }
+        reqDocFile = freopen(reqDoc, "wb", reqDocFile);
+        if(!reqDocFile){
+            logger("fileSrvReqHdlr", "Couldn't open the requested file\n"); perror("fopen");
+            return finishCorrectly(res, ep, epMethodName, 500);
         }
         if(body)
             fwrite(body->data, sizeof(char), body->size, reqDocFile);
@@ -168,15 +173,12 @@ HTTPResponse_t * fileSrvReqHdlr(HTTPRequest_t * req){
         if(!ResponseAddHeader(res, "Content-Length", 0))
             logger("fileSrvReqHdlr", "Couldn't add the response header Content-Length\n");
     }
-    else if(strcmp(EndpointGetMethod(ep), "DELETE") == 0){
+    else if(strcmp(epMethodName, "DELETE") == 0){
         if(unlink(reqDoc) < 0){
             perror("unlink");
             logger("fileSrvReqHdlr", "Couldn't delete the file: %s\n", reqDoc);
 
-            free(res);  
-            free(ep);
-            res = createErrorResponse(404);
-            return res;
+            return finishCorrectly(res, ep, epMethodName, 404);
         }
     }
     

@@ -14,20 +14,27 @@ make run
 By default the server exposes resources under `localhost:3456/www/`.
 Documents must be put under the public directory `content`.
 
-The code is organized as follows:
+The code is organised as follows:
 
 ```bash
 project/
 	bin/
 		# executable
+	content/
+		# web content and files
 	main.c # listening process, forking, high level connection handling
 	switcher.h
 	switcher.c # request switching logic
+	common.h
+	common.c # code shared by most C modules
+	unittests.py # unit tests with Python3 unittest module
 	lib/
 		# libraries
 		httpproto/
 			httpproto.h
 			httpproto.c # HTTP 1.1 implementation
+		path.h
+		path.c # path handling utilities
 		lists.h
 		lists.c # simple list implementation
 	handlers/
@@ -190,7 +197,7 @@ void connectionHandler(int client, struct sockaddr *sa, int length) {
     logger("connectionHandler", "Invalid request handler: %p!\n", handler);
 
   if(!res)
-    res = createErrorResponse(501);
+    res = createErrorResponse(500);
 
   if(!ResponseSend(res, client)){
     logger("connectionHandler", "Couldn't send the response\n");
@@ -287,7 +294,7 @@ sequenceDiagram
 			W-->>-C: Response
 		else Handler error
 			H-->>W: Error
-			W-->>C: 501 Internal Server Error
+			W-->>C: 500 Internal Server Error
 		end
 		
 	end
@@ -528,7 +535,7 @@ static char * HTTPRequestReadLine(int sockfd){
 The server provides primitives to set and restore http headers. The usage of cookies is left to the specific request handler implementation.
 
 ## Services
-Every service must be organized in a module that exports the required functionality.
+Every service must be organised in a module that exports the required functionality.
 The services are configured at startup by the listening process, by passing the endpoint configuration of the request handler to the switching logic.
 
 ### URL's path to folder path translation
@@ -539,69 +546,73 @@ title: URL's path to folder path
 ---
 flowchart TD
 	A["Obtain the base directory realpath B"]
-	B["Append the URL path"]
-	C["Obtain the realpath BU"]
-	D{"First bytes of B<br>equal to BU?"}
-	E["Path traversal"]
-	F["Ok"]
+	C["Append the URL path U<br>to get BU"]
+	D["Get real-path BUr"]
+	J{"realpath() fails?"}
+	K["Remove last path<br>component of BU"]
+	L{"Failed at least once?"}
+	M{"Removed only<br>one component?"}
+	N["Add the component back"]
+	E{"First bytes of B<br>equal to BU?"}
+	F["Path traversal"]
+	G["Ok, return real-path BUr"]
+	O["Error"]
+	Z["END"]
 
-	A-->B
-	B-->C
+	A-->C
 	C-->D
-	D-->|no|E
-	D-->|yes|F
+	D-->J
+	J-->|yes|K
+	K-->D
+	J-->|no|L
+	L-->|yes|M
+	M-->|yes|N
+	M-->|no|O
+	N-->E
+	L-->|no|E
+	E-->|no|F
+	E-->|yes|G
+	O-->Z
+	G-->Z
+	F-->Z
 ```
-The logic has been implemented as follows:
+The logic can be found inside /webUtils.c --> URLPath2AbsFilePath()
 
-```C
-char * URLPath2AbsFilePath(const char * const URLPath, const char * const baseDir){
-    static char * _baseDir = NULL;
-    char fullFsPath[MAX_PATH_LENGTH] = {};
-    char * canonicalFullFsPath = NULL;
-
-    if(!URLPath) return NULL;
-
-    if(baseDir){
-        // use the absolute path
-        _baseDir = realpath(baseDir, NULL);
-    }
-    // check if the path has been set at least once
-    if(!_baseDir){
-        logger("URLPath2AbsFilePath", "realpath\n"); perror("");
-        return NULL;
-    }
-
-    if(strlen(_baseDir)+strlen(URLPath) > MAX_PATH_LENGTH){
-        logger("URLPath2AbsFilePath", "File path is too large\n"); perror("");
-        return NULL;
-    }
-
-    strcat(fullFsPath, _baseDir);
-    strcat(fullFsPath, URLPath);
-
-    // check if it is a path traversal
-    canonicalFullFsPath = realpath(fullFsPath, NULL);
-    if(!canonicalFullFsPath){
-        logger("URLPath2AbsFilePath", "Invalid canonical absolute path, does the resource exists?\n"); perror("");
-        return NULL;
-    }
-    if(strlen(canonicalFullFsPath) > MAX_PATH_LENGTH){
-        logger("URLPath2AbsFilePath", "Canonical absolute file path is too large\n"); perror("");
-        return NULL;
-    }
-    if(
-        memcmp(canonicalFullFsPath, _baseDir,
-        MIN(strlen(canonicalFullFsPath), strlen(_baseDir)))
-    )
-    {
-        logger("URLPath2AbsFilePath", "Path traversal detected!\n"); perror("memcmp or strlen\n");
-        return NULL;
-    }
-
-    return canonicalFullFsPath;
-}
+To remove components a new module, which represents the Path ADT, has been created.
+```mermaid
+---
+title: Path Abstract Data Type
+---
+classDiagram
+    class Path ADT{
+        -string lastRemovedComponent
+        -bool reachedStart
+  
+        +string setPath(string)
+        +string getPath()
+        +int getNumberRemovedComponents()
+        +bool getLastRemovedComponent(stringRef)
+        +bool removeLastComponent()
+    }
 ```
-
+The general idea of how the primitives should be used is as follows (name have been reduced):
+```mermaid
+---
+title: How to use the Path primitives
+---
+flowchart TD
+	A["setPath"]
+	B["getPath"]
+	C["getNumRemComp"]
+	D["getLastRemComp"]
+	E["remLastComp"]
+	
+	A-->E
+	E-->E
+	E-->B
+	E-->C
+	E-->D
+```
 ## Web server service
 Exposes a public directory of web documents. Every file is a resource accessible from a specific path under the particular exposed folder, which is verified by the URL path translation logic.
 
@@ -621,7 +632,6 @@ flowchart TD
 
 ### Browser caching
 The file server tells the browser to cache a file for one hour as an example. It also provides the Last-Modified header, linked to the last modification time of the files.
-
 
 An example is the following image I requested for a second time a resource and the server responded correctly with a `304 Not Modified` response.  
 <img width="809" height="755" alt="304_cached_response" src="https://github.com/user-attachments/assets/d24036e2-cc2c-45b5-a6d6-182c08df15da" />

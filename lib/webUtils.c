@@ -1,6 +1,8 @@
 #include "webUtils.h"
-#include "common.h"
+#include <common.h>
+#include <lib/path.h>
 #include <lib/httpproto/httpproto.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -8,6 +10,25 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <sys/stat.h>
+
+/**
+ * @brief Frees the allocated memory, returns the canonicalFullFsPath if returnCan is true.
+ * 
+ * @param fullFsPath 
+ * @param lastComp 
+ * @param canonicalFullFsPath 
+ * @param returnCan 
+ * @return void* 
+ */
+static void * finishCorrectly(char *fullFsPath, char *lastComp, char *canonicalFullFsPath, bool returnCan){
+    if(fullFsPath) free(fullFsPath);
+    if(lastComp) free(lastComp);
+    if(returnCan == true)
+        return canonicalFullFsPath;
+    else if(canonicalFullFsPath)
+        free(canonicalFullFsPath);
+    return NULL;
+}
 
 /**
  * @brief Takes a relative URL path and for the first call, the base directory for public file content.
@@ -22,39 +43,55 @@
  */
 char * URLPath2AbsFilePath(const char * const URLPath, const char * const baseDir){
     static char * _baseDir = NULL;
-    char fullFsPath[MAX_PATH_LENGTH] = {};
+    char * fullFsPath = NULL;
+    char * lastComp = NULL; // last removed component temporary storage
     char * canonicalFullFsPath = NULL;
+    int requiredLen = 0;
 
-    if(!URLPath) return NULL;
+    if(!URLPath) return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
 
     if(baseDir){
         // use the absolute path
         _baseDir = realpath(baseDir, NULL);
     }
-    // check if the path has been set at least once
+    // check if the path has been set at least once and if it is not too long
     if(!_baseDir){
         logger("URLPath2AbsFilePath", "realpath\n"); perror("");
-        return NULL;
+        return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
-
-    if(strlen(_baseDir)+strlen(URLPath) > MAX_PATH_LENGTH){
+    requiredLen = strlen(_baseDir) + strlen(URLPath) +1;
+    if(requiredLen > MAX_PATH_LENGTH){
         logger("URLPath2AbsFilePath", "File path is too large\n"); perror("");
-        return NULL;
+        return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
 
+    // concatenate the base and URL to build the full filesystem path
+    fullFsPath = (char *)malloc(sizeof(char)*(requiredLen)); fullFsPath[0] = '\0';
     strcat(fullFsPath, _baseDir);
     strcat(fullFsPath, URLPath);
 
-    // check if it is a path traversal
-    canonicalFullFsPath = realpath(fullFsPath, NULL);
+    // -- check if it is a path traversal --
+    PathSetPath(fullFsPath);
+    // remove components from the path as long as realpath tells us that the path doesn't exist
+    while((canonicalFullFsPath = realpath(fullFsPath, NULL)) == NULL){
+        if(errno == ENOENT){ // File doesn't exist
+            PathRemLastComp();
+            fullFsPath = PathGetPath();
+        }
+        else{ // Unknown error
+            logger("URLPath2AbsFilePath", "Unknown realpath(fullFsPath, NULL) error\n"); perror("");
+            return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
+        }
+    }
+
     logger("URLPath2AbsFilePath", "canonicalFullFsPath: %s\n", canonicalFullFsPath);
     if(!canonicalFullFsPath){
         logger("URLPath2AbsFilePath", "Invalid canonical absolute path, does the resource exists?\n"); perror("");
-        return NULL;
+        return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
     if(strlen(canonicalFullFsPath) > MAX_PATH_LENGTH){
         logger("URLPath2AbsFilePath", "Canonical absolute file path is too large\n"); perror("");
-        return NULL;
+        return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
     if(
         memcmp(canonicalFullFsPath, _baseDir,
@@ -63,10 +100,31 @@ char * URLPath2AbsFilePath(const char * const URLPath, const char * const baseDi
     {
         logger("URLPath2AbsFilePath", "Path traversal detected!\n"); perror("memcmp or strlen\n");
         logger("URLPath2AbsFilePath", "fullFsPath: %s\n", fullFsPath);
-        return NULL;
+        return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
 
-    return canonicalFullFsPath;
+    // Add the last removed component if any, because a service (request handler) needs
+    // to be able to create a file if it doesn't exists.
+    // We don't handle the creation of missing directories, so at most one removed component is allowed.
+    // First check if the component contains "./" "../" to block it.
+    if(PathGetNumRemovedComp() > 1){ 
+        return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
+    }
+    if(PathGetNumRemovedComp() == 1){
+        PathGetLastRemComp(&lastComp);
+        if(lastComp == NULL) return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
+
+        if(strstr(lastComp, "./")) return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
+
+        requiredLen = strlen(canonicalFullFsPath) + strlen(lastComp) +1;
+        canonicalFullFsPath = realloc(canonicalFullFsPath, requiredLen);
+        if(!canonicalFullFsPath) return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
+        strcat(canonicalFullFsPath, lastComp);
+        canonicalFullFsPath[requiredLen -1] = '\0';
+    }
+    logger("URLPath20AbsFilePath", "canonicalFullFsPath: %s\n", canonicalFullFsPath);
+
+    return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, true);
 }
 
 /**
@@ -136,10 +194,10 @@ HTTPResponse_t * createErrorResponse(const int errorCode){
 }
 
 /**
- * @brief Takes a file and returns its last modified date as a Date header value (RFC 7231).
+ * @brief Takes a file and returns its last modified date as a time_t value.
  * 
  */
-char * getLastModDate(const char * const filename){
+time_t getLastModDate(const char * const filename){
     struct stat attr;
     if (stat(filename, &attr) == -1) {
         perror("stat");
@@ -147,5 +205,5 @@ char * getLastModDate(const char * const filename){
     }
 
     // Modification time
-    return timetToDateRFC7231(attr.st_mtime);
+    return attr.st_mtime;
 }
