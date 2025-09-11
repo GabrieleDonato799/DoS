@@ -10,10 +10,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+static char buff[2*MAX_REQ_SIZE] = {};
+static char * start = buff, * end = buff;
+static int recvN = 0; // how many bytes have been received
+
 static char * HTTPRequestReadLine(int sockfd){
-    static char buff[2*MAX_REQ_SIZE] = {};
-    static int recvN = 0; // how many bytes have been received
-    static char * start = buff, * end = buff;
     char * newStr = NULL;
     int moved;
 
@@ -121,9 +122,39 @@ static HTTPHeader_t * RequestParseHeaderField(const char * line){
     return hdr;
 }
 
+static HTTPBody_t * RequestReadBody(const HTTPHeader_t * const contentLength){
+    HTTPBody_t * body = NULL;
+    int len;
 
-// HTTPBody_t * RequestRecvBody(HTTPHeader_t contentLength){
-// }
+    len = atoi(HeaderGetValue(contentLength));
+    if(len > 0){
+        body = (HTTPBody_t *)malloc(sizeof(HTTPBody_t)*len);
+        start += 2; // skip the \r\n
+        BodySetData(body, start, len);
+    }
+    
+    return body;
+}
+
+static HTTPHeader_t * findHeader(const HTTPHeader_t * vec, const char * headerName){
+    const HTTPHeader_t * ptr;
+
+    if(!vec || !headerName){
+        return NULL;
+    }
+    ptr = vec;
+
+    while(ptr->name != NULL && ptr->value != NULL){
+        int rc;
+        if((rc = strcasecmp(ptr->name, headerName)) == 0){
+            return ptr;
+        }
+        ptr++;
+    }
+
+    return NULL;
+}
+
 HTTPRequest_t * RequestParse(int client){
     char * line;
     int curHdr = 0;
@@ -156,33 +187,24 @@ HTTPRequest_t * RequestParse(int client){
         die("413 (Too many headers)"); // TODO: actually respond
       }
     }
-  
+    
     // assemble the request
     req->reqLine = reqLine;
     req->headers = headers;
-  
+
+    // read the body
+    HTTPHeader_t * hdrCL;
+    hdrCL = findHeader(req->headers, "Content-Length");
+    if(hdrCL){
+        req->body = RequestReadBody(hdrCL);
+        logger("RequestParse", "BodyGetData: %s\n", BodyGetData(req->body));
+    }
+
     logger("RequestParse", "Exiting\n");  
 
     return req;
 }
 
-static HTTPHeader_t * findHeader(const HTTPHeader_t * vec, const char * headerName){
-    const HTTPHeader_t * ptr;
-
-    if(!vec || !headerName){
-        return NULL;
-    }
-    ptr = vec;
-
-    while(ptr != NULL){
-        int rc;
-        if((rc = strcasecmp(ptr->name, headerName)) == 0){
-            return ptr;
-        }
-    }
-
-    return NULL;
-}
 
 Endpoint_t * RequestGetEndpoint(const HTTPRequest_t * req){
     Endpoint_t * ep = (Endpoint_t *)malloc(sizeof(Endpoint_t));

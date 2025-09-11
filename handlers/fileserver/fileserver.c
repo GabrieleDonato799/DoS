@@ -154,7 +154,7 @@ HTTPResponse_t * fileSrvReqHdlr(HTTPRequest_t * req){
             logger("fileSrvReqHdlr", "Couldn't add the response header Cache-Control\n");
     }
     else if(strcmp(EndpointGetMethod(ep), "PUT") == 0){
-        body = BodyGetData(RequestGetBody(req));
+        body = RequestGetBody(req);
 
         reqDocFile = fopen(reqDoc, "wb");
         if(!reqDocFile){
@@ -173,7 +173,7 @@ HTTPResponse_t * fileSrvReqHdlr(HTTPRequest_t * req){
             perror("unlink");
             logger("fileSrvReqHdlr", "Couldn't delete the file: %s\n", reqDoc);
 
-            free(res);
+            free(res);  
             free(ep);
             res = createErrorResponse(404);
             return res;
