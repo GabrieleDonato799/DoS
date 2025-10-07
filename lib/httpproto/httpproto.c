@@ -14,6 +14,22 @@ static char buff[2*MAX_REQ_SIZE] = {};
 static char * start = buff, * end = buff;
 static int recvN = 0; // how many bytes have been received
 
+/**
+ * @brief When pipelining requests, it must be called before receiving a request from a file descriptor.
+ * 
+ */
+static void prepareForNextRequest(){
+    int i;
+    
+    for(i=0; i<2*MAX_REQ_SIZE; i++){
+        buff[i] = 0;
+    }
+    start = end = buff;
+    recvN = 0;
+    
+    return;
+}
+
 static char * HTTPRequestReadLine(int sockfd){
     char * newStr = NULL;
     int moved;
@@ -46,9 +62,7 @@ static char * HTTPRequestReadLine(int sockfd){
     }
 
     if(end-start > 0){
-        newStr = (char *)malloc(sizeof(char)*(end-start +3));
-        strncpy(newStr, start, end-start +2); // +2 keeps \r\n
-        newStr[end-start +2] = 0;
+        newStr = StringNCopy(start, end-start +2); // +2 keeps \r\n
         start = end +2; // skip the \r\n
     }
 
@@ -65,33 +79,27 @@ static HTTPRequestLine_t * RequestParseReqLine(const char * s){
     if((end = strstr(start, " ")) == NULL || end-start <= 0){
         die("method");
     }
-    reqLine->method = (char *)malloc(sizeof(char) * (end-start +1));
-    strncpy(reqLine->method, start, end-start);
-    reqLine->method[end-start] = 0;
+    reqLine->method = StringNCopy(start, end-start);
     start = end + 1;
 
     // URL (Only relatives are supported)
     if((end = strstr(start, " ")) == NULL || end-start <= 0){
         die("URL");
     }
-    reqLine->path = (char *)malloc(sizeof(char) * (end-start +1));
-    strncpy(reqLine->path, start, end-start);
-    reqLine->path[end-start] = 0;
+    reqLine->path = StringNCopy(start, end-start);
     start = end + 1;
 
     // HTTP protocol version (Only HTTP/1.1 is supported)
     if((end = strstr(start, "\r\n")) == NULL || end-start <= 0){
         die("protocol version");
     }
-    reqLine->protocol = (char *)malloc(sizeof(char) * (end-start +1));
-    strncpy(reqLine->protocol, start, end-start);
-    reqLine->protocol[end-start] = 0;
+    reqLine->protocol = StringNCopy(start, end-start);
     
     return reqLine;
 }
 
 void printHTTPRequestLine(HTTPRequestLine_t * r){
-    logger("printHTTPRequestLine", "r->method: %s\nr->path: %s\nr->protocol: %s\n", r->method, r->path, r->protocol);
+    logger("r->method: %s\nr->path: %s\nr->protocol: %s\n", r->method, r->path, r->protocol);
 }
 
 static HTTPHeader_t * RequestParseHeaderField(const char * line){
@@ -104,18 +112,14 @@ static HTTPHeader_t * RequestParseHeaderField(const char * line){
     if((end = strstr(start, ": ")) == NULL || end-start <= 0){
         die("RequestParseHeaderField name");
     }
-    hdr->name = (char *)malloc(sizeof(char) * (end-start +1)); // +1 string terminator
-    strncpy(hdr->name, start, end-start);
-    hdr->name[end-start] = 0;
+    hdr->name = StringNCopy(start, end-start);
     start = end + 2;
     
     // Header value
     if((end = strstr(start, "\r\n")) == NULL || end-start <= 0){
         die("RequestParseHeaderField value");
     }
-    hdr->value = (char *)malloc(sizeof(char) * (end-start +1));
-    strncpy(hdr->value, start, end-start);
-    hdr->value[end-start] = 0;
+    hdr->value = StringNCopy(start, end-start);
     
     start = end + 1;
 
@@ -128,7 +132,7 @@ static HTTPBody_t * RequestReadBody(const HTTPHeader_t * const contentLength){
 
     len = atoi(HeaderGetValue(contentLength));
     if(len > 0){
-        body = (HTTPBody_t *)malloc(sizeof(HTTPBody_t)*len);
+        body = (HTTPBody_t *)malloc(sizeof(HTTPBody_t));
         start += 2; // skip the \r\n
         BodySetData(body, start, len);
     }
@@ -172,7 +176,7 @@ HTTPRequest_t * RequestParse(int client){
   
     // parse the headers
     while((line = HTTPRequestReadLine(client)) != NULL){
-      logger("RequestParse", "HTTPRequestReadLine: %s\n", line);
+      logger("HTTPRequestReadLine: %s\n", line);
       
       // reached empty line separating headers from body
       if(strcmp("", line) == 0){
@@ -181,10 +185,11 @@ HTTPRequest_t * RequestParse(int client){
   
       if(curHdr < MAX_HEADERS){
         headers[curHdr++] = *RequestParseHeaderField(line);
-        logger("RequestParse", "HTTPHeader: name: %s, value: %s\n", headers[curHdr-1].name, headers[curHdr-1].value);
+        logger("HTTPHeader: name: %s, value: %s\n", headers[curHdr-1].name, headers[curHdr-1].value);
       }
       else{
-        die("413 (Too many headers)"); // TODO: actually respond
+        // die("413 (Too many headers)"); // TODO: actually respond
+        return NULL;
       }
     }
     
@@ -197,10 +202,12 @@ HTTPRequest_t * RequestParse(int client){
     hdrCL = findHeader(req->headers, "Content-Length");
     if(hdrCL){
         req->body = RequestReadBody(hdrCL);
-        logger("RequestParse", "BodyGetData: %s\n", BodyGetData(req->body));
+        logger("BodyGetData: %s\n", BodyGetData(req->body));
     }
 
-    logger("RequestParse", "Exiting\n");  
+    prepareForNextRequest(); // reset logic
+
+    logger("Exiting\n");
 
     return req;
 }
@@ -332,7 +339,7 @@ bool ResponseSend(const HTTPResponse_t * const res, int sockfd){
 
     if(!res) return false;
     
-    codeStr = (char *)malloc(4*sizeof(char)); // 3 chars for the code, 1 for terminator
+    codeStr = MallocString(3);
     snprintf(codeStr, 4, "%3d\0", res->resLine->statusCode);
 
     Send(sockfd, res->resLine->protocol, strlen(res->resLine->protocol), 0);
@@ -356,6 +363,8 @@ bool ResponseSend(const HTTPResponse_t * const res, int sockfd){
         Send(sockfd, res->body->data, res->body->size, 0);
 
     free(codeStr);
+
+    return true;
 }
 
 void initResponse(HTTPResponse_t ** res){
@@ -392,16 +401,14 @@ void freeResponse(HTTPResponse_t * res){
 
 char * RequestLineGetMethod(HTTPRequestLine_t * reqLine){
     int len = strlen(reqLine->method);
-    char * method = (char *)malloc(sizeof(char)*(len +1));
-    strncpy(method, reqLine->method, len+1);
+    char * method = StringNCopy(reqLine->method, len);
     return method;
 }
 // char * RequestLineGetHost(){
 // }
 char * RequestLineGetPath(HTTPRequestLine_t * reqLine){
     int len = strlen(reqLine->path);
-    char * path = (char *)malloc(sizeof(char)*(len +1));
-    strncpy(path, reqLine->path, len+1);
+    char * path = StringNCopy(reqLine->path, len);
     return path;
 }
 
@@ -416,12 +423,11 @@ bool ResponseLineSetProtocol(HTTPResponseLine_t * const resLine, const int versi
     switch (versionCode)
     {
         case HTTP_VERSION_1_1:
-            resLine->protocol = (char*)malloc(http1_1_size +1);
-            strncpy(resLine->protocol, http1_1, http1_1_size +1);
+            resLine->protocol = StringNCopy(http1_1, http1_1_size);
         break;
         
         default:
-            logger("ResponseLineSetProtocol", "Invalid HTTP version\n");
+            logger("Invalid HTTP version\n");
             return false;
         break;
     }
@@ -504,8 +510,7 @@ char * getStatusMessage(const int code){
         case 511: str = "Network Authentication Required"; break;
     }
     
-    copyStr = (char *)malloc((strlen(str) +1)*sizeof(char));
-    strcpy(copyStr, str);
+    copyStr = StringCopy(str);
 
     return copyStr;
 }
@@ -529,8 +534,7 @@ bool HeaderSetName(HTTPHeader_t * const hdr, const char * const name){
     if(!hdr || !name)
         return false;
 
-    hdr->name = (char *)malloc((strlen(name) +1)*sizeof(char));
-    strcpy(hdr->name, name);
+    hdr->name = StringCopy(name);
     
     return true;
 }
@@ -538,8 +542,7 @@ bool HeaderSetValue(HTTPHeader_t * const hdr, const char * const value){
     if(!hdr || !value)
         return false;
 
-    hdr->value = (char *)malloc((strlen(value) +1)*sizeof(char));
-    strcpy(hdr->value, value);
+    hdr->value = StringCopy(value);
     
     return true;
 }
@@ -574,7 +577,9 @@ char * BodyGetData(const HTTPBody_t * body){
 bool BodySetData(HTTPBody_t * body, const char * data, const int size){
     if(!body || !data)
         return false;
-    body->data = data;
+    
+    body->data = MallocString(size); // it allocates a byte more for the string terminator, even if not needed
+    memcpy(body->data, data, size); // strncpy doesn't work with '\0' bytes in the middle.
     body->size = size;
     return true;
 }
@@ -590,9 +595,7 @@ char * EndpointGetPath(const Endpoint_t * const ep){
 
     if(!ep) return NULL;
 
-    copy = (char *)malloc((strlen(ep->path) +1)*sizeof(char));
-    copy[strlen(ep->path)] = '\0';
-    strncpy(copy, ep->path, strlen(ep->path));
+    copy = StringNCopy(ep->path, strlen(ep->path));
 
     return copy;
 }
@@ -608,9 +611,7 @@ char * EndpointGetMethod(const Endpoint_t * const  ep){
 
     if(!ep) return NULL;
 
-    copy = (char *)malloc((strlen(ep->method) +1)*sizeof(char));
-    strcpy(copy, ep->method);
-    copy[strlen(ep->method)] = '\0';
+    copy = StringCopy(ep->method);
 
     return copy;
 }
@@ -620,8 +621,7 @@ bool EndpointSetMethod(Endpoint_t *ep, const char *method){
 
     if(!ep || !method) return false;
     len = strlen(method);
-    ep->method = (char *)malloc(sizeof(char)*(len +1));
-    strncpy(ep->method, method, len +1 < MAX_METHOD_LENGTH ? len +1 : MAX_METHOD_LENGTH);
+    ep->method = StringNCopy(method, len < MAX_METHOD_LENGTH ? len : MAX_METHOD_LENGTH);
 
     return true;
 }
@@ -631,8 +631,7 @@ bool EndpointSetPath(Endpoint_t *ep, const char *path){
     
     if(!ep || !path) return false;
     len = strlen(path);
-    ep->path = (char *)malloc(sizeof(char)*(len +1));
-    strncpy(ep->path, path, len +1 < MAX_PATH_LENGTH ? len +1 : MAX_PATH_LENGTH);
+    ep->path = StringNCopy(path, len < MAX_PATH_LENGTH ? len : MAX_PATH_LENGTH);
 
     return true;
 }
@@ -645,8 +644,8 @@ bool EndpointSetPath(Endpoint_t *ep, const char *path){
  * matches the patterns: "/example/", "/example/a", "/example/veryverylong/short".
  * Only the first '*' is used for comparison. 
  * 
- * @return true 
- * @return false 
+ * @return true if the pattern matches path
+ * @return false if the pattern doesn't match the path
  */
 static bool checkPatternPath(const char * const pattern, const char * const path){
     char * star = NULL;
@@ -660,13 +659,14 @@ static bool checkPatternPath(const char * const pattern, const char * const path
         N = star - pattern;
 
         printf("path %s, pattern %s, star %s, N %d\n", path, pattern, star, N);
-        printf("%d\n", res = strncmp(path, pattern, N));
+        res = (strncmp(path, pattern, N) == 0);
+        printf("%d\n", res);
     }
     else{
-        return strcmp(pattern, path) == 0;
+        res = (strcmp(pattern, path) == 0);
     }
 
-    return false;
+    return res;
 }
 
 bool EndpointCompare(const Endpoint_t * const A, const Endpoint_t * const B){
@@ -682,7 +682,7 @@ bool EndpointCompare(const Endpoint_t * const A, const Endpoint_t * const B){
 bool EndpointCmpPatternPath(const Endpoint_t * const A, const Endpoint_t * const B){
     if(
         strcmp(A->method, B->method) == 0 &&
-        checkPatternPath(A->path, B->path) == 0
+        checkPatternPath(A->path, B->path) == true
     )
         return true;
     else
@@ -693,11 +693,9 @@ Endpoint_t * EndpointCopy(const Endpoint_t *ep){
     if(!ep || !ep->method || !ep->path) return NULL;
     
     Endpoint_t * new = (Endpoint_t*)malloc(sizeof(Endpoint_t));
-    new->method = (char *)malloc((strlen(ep->method) +1)*sizeof(char));
-    new->path = (char *)malloc((strlen(ep->path) +1)*sizeof(char));
 
-    strcpy(new->method, ep->method);
-    strcpy(new->path, ep->path);
+    new->method = StringCopy(ep->method);
+    new->path = StringCopy(ep->path);
 
     return new;
 }
@@ -713,21 +711,21 @@ void EndpointPrint(const Endpoint_t * const ep){
  * @return char* 
  */
 char * timetToDateRFC7231(const time_t t){
-    char * outstr = (char *)malloc(MAX_DATE_HEADER_VALUE_SIZE*sizeof(char));
+    char * outstr = MallocString(MAX_DATE_HEADER_VALUE_SIZE);
     struct tm *tmp;
 
     tmp = gmtime(&t);
     if (tmp == NULL) {
-        logger("timetToDateRFC7231", "Error retrieving localtime (gmtime)\n");
+        logger("Error retrieving localtime (gmtime)\n");
         return NULL;
     }
 
     if (strftime(outstr, MAX_DATE_HEADER_VALUE_SIZE, "%a, %d %b %Y %T GMT", tmp) == 0) {
-        logger("timetToDateRFC7231", "strftime returned 0\n");
+        logger("strftime returned 0\n");
         return NULL;
     }
 
-    logger("timetToDateRFC7231", "Result string is \"%s\"\n", outstr);
+    logger("Result string is \"%s\"\n", outstr);
 
     return outstr;
 }
@@ -774,5 +772,5 @@ int compareDateRFC7231(const HTTPHeader_t * const A, const HTTPHeader_t * const 
     tA = mktime(&tmA);
     tB = mktime(&tmB);
     
-    return (tA < tB ? -1 : (tA == tB ? 0 : -1));
+    return (tA < tB ? -1 : (tA == tB ? 0 : 1));
 }

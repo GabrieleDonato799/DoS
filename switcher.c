@@ -1,6 +1,6 @@
 #include "switcher.h"
-#include "lists.h"
-#include "lib/httpproto/httpproto.h"
+#include <lib/lists.h>
+#include <lib/httpproto/httpproto.h>
 
 #define MAX_ENDPOINTS 10
 

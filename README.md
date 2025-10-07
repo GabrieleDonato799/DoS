@@ -8,7 +8,14 @@ To get started:
 ```bash
 git clone https://github.com/GabrieleDonato799/DoS.git
 cd DoS
+make main && make setuid
 make run
+```
+
+To check that the program passes all tests:
+```bash
+cd DoS
+python3 unittests.py
 ```
 
 By default the server exposes resources under `localhost:3456/www/`.
@@ -18,63 +25,72 @@ The code is organised as follows:
 
 ```bash
 project/
-	bin/
-		# executable
-	content/
-		# web content and files
 	main.c # listening process, forking, high level connection handling
 	switcher.h
 	switcher.c # request switching logic
 	common.h
 	common.c # code shared by most C modules
 	unittests.py # unit tests with Python3 unittest module
-	lib/
-		# libraries
-		httpproto/
-			httpproto.h
-			httpproto.c # HTTP 1.1 implementation
-		path.h
-		path.c # path handling utilities
-		lists.h
-		lists.c # simple list implementation
+
+	bin/
+		# executable
 	handlers/
 		# request handlers / services implementation
 		webserver/
 			webserver.h
-			webserver.c
+			webserver.c # web server and login logic
+		srv/
+			srv.h
+			srv.c # common logic to the web and file servers
 		fileserver/
 			fileserver.h
 			fileserver.c
-    content/
-      # public content
+    jail/
+	  	# chroot & chdir jail
+      	content/
+			files/
+			www/
+	lib/
+		# libraries
+		path.h
+		path.c # path handling utilities
+		lists.h
+		lists.c # simple list implementation
+		webutils.h
+		webutils.c # also path traversal sanitization
+
+		httpproto/
+			httpproto.h
+			httpproto.c # HTTP 1.1 implementation
+	logs/
 ```
 
 To configure the services or the main server software, a basic internal configuration API is present.
 
 # Requirements analysis
 
-| Functional requirement                                                                 | Priority |
-| -------------------------------------------------------------------------------------- | -------- |
-| Concurrent server implementation with fork()                                           | 1        |
-| HTTP request parsing                                                                   | 1        |
-| HTTP response building                                                                 | 1        |
-| Support for the following HTTP headers: Host, Content-Length, Date, Server, Connection | 2        |
-| Converting between the HTTP Date header value format and a C date format               | 2        |
-| Support for the following HTTP methods: GET/HEAD, PUT, POST, DELETE                    | 3        |
-| Basic cookie retrieval (Cookie header) and setting (Set-Cookie header)                 | 4        |
-| Basic negotiation capabilities with Accept and Content-Type                            | 4        |
-| A file handling service to manage files under a specific directory                     | 5        |
-| Files specified in the path of the URL of the HTTP request                             | 5        |
-| Conditional GET requests, linked to the last modification time of the files            | 5        |
-| Persistent TCP connections with keepalive, Connection header field                     | 6        |
+| Functional requirement                                                                 | Priority | Implemented |
+| -------------------------------------------------------------------------------------- | -------- | ----------- |
+| Concurrent server implementation with fork()                                           | 1        |     yes     |
+| HTTP request parsing                                                                   | 1        |     yes     |
+| HTTP response building                                                                 | 1        |     yes     |
+| Support for the following HTTP headers: Host, Content-Length, Date, Server, Connection | 2        |     yes     |
+| Converting between the HTTP Date header value format and a C date format               | 2        |     yes     |
+| Support for the following HTTP methods: GET/HEAD, PUT, POST, DELETE                    | 3        |     yes     |
+| Basic cookie retrieval (Cookie header) and setting (Set-Cookie header)                 | 4        |     yes     |
+| Basic negotiation capabilities with Accept and Content-Type                            | 4        |     no      |
+| A file handling service to manage files under a specific directory                     | 5        |     yes     |
+| Files specified in the path of the URL of the HTTP request                             | 5        |     yes     |
+| Conditional GET requests, linked to the last modification time of the files            | 5        |     yes     |
+| Persistent TCP connections with keepalive, Connection header field                     | 6        |     no      |
 
-| Non-functional requirement           | Priority |
-| ------------------------------------ | -------- |
-| Prevent path traversal with chroot() | 6        |
+| Non-functional requirement           | Priority | Implemented |
+| ------------------------------------ | -------- | ----------- |
+| Prevent path traversal with chroot() | 6        |     yes     |
 
 
 ## Required privileges
-The server is executed as a normal user, running it under a dedicated user is recommended. The server will only bind not well-known ports. Services must have the necessary file system permissions and should follow the principle of least privilege.
+The server should be executed as a normal user (recommended) but it requires the setuid bit to use chroot and chdir. The server can bind well-known. Services must have the necessary file system permissions and should follow the principle of least privilege.
 # Architecture
 ## Concurrent server implementation with fork()
 ### Components and Responsibilities
@@ -124,24 +140,24 @@ int main() {
   registerHdlr(&fileEpDELETE, fileSrvReqHdlr);
   // ...
 
-  logger("main", "Server started\n");
+  logger("Server started\n");
 
   while (1) {
     int s;
     if ((s = accept(server, (struct sockaddr *)&saddr, &size_saddr)) >= 0) {
       pid_t pid;
 
-      logger("main", "Client connected!\n");
+      logger("Client connected!\n");
       if ((pid = fork()) < 0) { // error
         die("fork");
       } else if (pid == 0) { // son
-        logger("main", "I've been forked!\n");
+        logger("I've been forked!\n");
         // sockets handling & communications
         close(server);
         connectionHandler(s, (struct sockaddr *)&s, sizeof(s));
         close(s);
         
-        logger("main", "Client disconnected!\n");
+        logger("Client disconnected!\n");
         exit(EXIT_SUCCESS);
       } else { // father
         close(s);
@@ -184,8 +200,11 @@ void connectionHandler(int client, struct sockaddr *sa, int length) {
   // Restore signal handlers
   // ...
 
-  // logging to a per worker file
-  // ... output redirection
+  // setup logging to a per worker file
+  // redirect output ...
+
+  // setup jail with chroot() and chdir()
+  // relinquish privileges ...
   
   req = RequestParse(client);
   ep = RequestGetEndpoint(req);
@@ -193,23 +212,23 @@ void connectionHandler(int client, struct sockaddr *sa, int length) {
   handler = switcher(ep);
   if(handler)
     res = handler(req);
-  else
-    logger("connectionHandler", "Invalid request handler: %p!\n", handler);
+  else{
+    logger("Invalid request handler: %p!\n", handler);
+    res = createErrorResponse(404);
+  }
 
   if(!res)
     res = createErrorResponse(500);
 
   if(!ResponseSend(res, client)){
-    logger("connectionHandler", "Couldn't send the response\n");
+    logger("Couldn't send the response\n");
   }
-
-  freeRequest(req);
-  freeResponse(res);
 
   return;
 }
 ```
 To distinguish between requests for different services, a request handler is bound to an endpoint.
+
 ###  Shared abstract data types
 The endpoint to which the request handler is bound is not dependent on the service configuration itself, but depends on the server software configuration.
 The scheme, host, port and path on which the service must be exposed are determined by the listening server process, on startup, long before a request handler receives data. Thus every request is handled with the same configuration.
@@ -326,9 +345,11 @@ classDiagram
 	    -HTTPHeader parseHeaderField()
 	    -HTTPBody recvBody(HTTPHeader contentLength)
 	    +HTTPRequest parse()
+	    +HTTPHeader RequestFindHeader()
     }
     
     class HTTPResponse{
+	    -int nHeaders
 	    +bool setResLine(HTTPRequestLine)
 	    +bool addBody(HTTPBody)
 	    +bool addHeader(string key, string value)
@@ -365,6 +386,7 @@ classDiagram
   
     class HTTPBody{
         -string data
+        -int sizeOfData
   
         +string getData()
         +string setData()
@@ -427,9 +449,9 @@ HTTPRequest_t * RequestParse(int client){
     HTTPRequestLine_t * reqLine = NULL;
     HTTPHeader_t * headers = NULL; // NULL terminated
  
+	// initialize the request
     initRequest(&req);
-
-    headers = (HTTPHeader_t *)calloc(MAX_HEADERS +1, sizeof(HTTPHeader_t));
+	// initialize locals
     
     reqLine = RequestParseReqLine(HTTPRequestReadLine(client));
   
@@ -451,8 +473,6 @@ HTTPRequest_t * RequestParse(int client){
     // assemble the request
     req->reqLine = reqLine;
     req->headers = headers;
-  
-    logger("RequestParse", "Exiting\n");  
 
     return req;
 }
@@ -522,9 +542,8 @@ static char * HTTPRequestReadLine(int sockfd){
     }
 
     if(end-start > 0){
-        newStr = (char *)malloc(sizeof(char)*(end-start +3));
+        newStr = MallocString(end-start +2);
         strncpy(newStr, start, end-start +2); // +2 keeps \r\n
-        newStr[end-start +2] = 0;
         start = end +2; // skip the \r\n
     }
 
@@ -532,13 +551,37 @@ static char * HTTPRequestReadLine(int sockfd){
 }
 ```
 ## Cookies
-The server provides primitives to set and restore http headers. The usage of cookies is left to the specific request handler implementation.
+
+The server provides primitives to set and restore http headers. The usage of cookies is left to the specific request handler implementation. An example is provided consisting of the authenticated web page www/index.html and the login.html web pages served by the webSrvReqHdlr() and the www/login endpoint to get the cookie.
+```mermaid
+---
+title: Cookies usage example
+---
+flowchart TD
+	A["Try to access /www/index.html"]
+	B{"Is the 'username=...'<br>cookie set?"}
+	C["Redirect to /login.html"]
+	E["Set 'username=...' cookie"]
+	F["Redirect to /www/index.html"]
+	G["Show /www/index.html"]
+	H["Logout"]
+
+	A-->B
+	B-->|No|C
+	B-->|Yes|G
+	C-->E
+	E-->F
+	F-->A
+	H-->C
+	G-->|Press logout button|H
+```
 
 ## Services
 Every service must be organised in a module that exports the required functionality.
 The services are configured at startup by the listening process, by passing the endpoint configuration of the request handler to the switching logic.
 
-### URL's path to folder path translation
+### URL's path to folder path translation & Path traversal sanitization
+The translation logic also tries to mitigate path traversals so that they can't actually go beyond the jail/content directory.
 The translation of an URL's path to a folder path to access the actual document it is as follows:
 ```mermaid
 ---
@@ -613,6 +656,11 @@ flowchart TD
 	E-->C
 	E-->D
 ```
+
+#### Chroot() & Chdir()
+To prevent path traversals a worker process jails itself before it handles a request, then it relinquishes the privileges with setuid(getuid()), assuming it is not run as root.
+It is not done at startup as every worker process must prepare its log file, thus requires access to the logs/ folder located outside of the jail. 
+
 ## Web server service
 Exposes a public directory of web documents. Every file is a resource accessible from a specific path under the particular exposed folder, which is verified by the URL path translation logic.
 
@@ -638,3 +686,4 @@ An example is the following image I requested for a second time a resource and t
 
 Instead, this is a subsequent request with the disabled browser cache.  
 <img width="809" height="741" alt="200_non_cached_response" src="https://github.com/user-attachments/assets/5eaba6d0-fb7c-4cad-b71a-0d6276e24b2e" />
+Note: on more recent versions, Firefox takes the response directly from the cache, showing a 200 status code. You can use the test_cache script to observe a 304 status code instead.

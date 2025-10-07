@@ -9,6 +9,7 @@
  * 
  */
 
+#include <common.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,7 +30,7 @@ static int numRemComp = 0;
  */
 bool PathSetPath(const char * const path){
     if(path){
-        _path = (char *)malloc(sizeof(char)*(strlen(path) +1));
+        _path = MallocString(strlen(path));
         if(_path)
             strcpy(_path, path);
         else
@@ -68,8 +69,7 @@ bool PathGetLastRemComp(char ** out){
         else{
             if(last){
                 if(*out) free(*out);
-                *out = (char *)malloc(sizeof(char)*(strlen(last) +1));
-                strcpy(*out, last);
+                *out = StringCopy(last);
             }
             else{
                 *out = NULL;
@@ -100,9 +100,7 @@ bool PathRemLastComp(){
 
         if(*end == '/'){
             if(last) free(last);
-            last = (char *)malloc(sizeof(char)*(strlen(end) +1));
-            strcpy(last, end);
-            last[strlen(end)] = '\0';
+            last = StringCopy(end);
 
             // printf("found: %c, component: %s\n", *end, last);
             *end = '\0';

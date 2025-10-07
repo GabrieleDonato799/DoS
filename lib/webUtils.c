@@ -56,20 +56,21 @@ char * URLPath2AbsFilePath(const char * const URLPath, const char * const baseDi
     }
     // check if the path has been set at least once and if it is not too long
     if(!_baseDir){
-        logger("URLPath2AbsFilePath", "realpath\n"); perror("");
+        logger("realpath\n"); perror("");
         return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
     requiredLen = strlen(_baseDir) + strlen(URLPath) +1;
     if(requiredLen > MAX_PATH_LENGTH){
-        logger("URLPath2AbsFilePath", "File path is too large\n"); perror("");
+        logger("File path is too large\n"); perror("");
         return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
 
     // concatenate the base and URL to build the full filesystem path
-    fullFsPath = (char *)malloc(sizeof(char)*(requiredLen)); fullFsPath[0] = '\0';
+    fullFsPath = MallocString(requiredLen); fullFsPath[0] = '\0';
     strcat(fullFsPath, _baseDir);
     strcat(fullFsPath, URLPath);
 
+#ifdef SANITIZE_PATH
     // -- check if it is a path traversal --
     PathSetPath(fullFsPath);
     // remove components from the path as long as realpath tells us that the path doesn't exist
@@ -79,27 +80,31 @@ char * URLPath2AbsFilePath(const char * const URLPath, const char * const baseDi
             fullFsPath = PathGetPath();
         }
         else{ // Unknown error
-            logger("URLPath2AbsFilePath", "Unknown realpath(fullFsPath, NULL) error\n"); perror("");
+            logger("Unknown realpath(fullFsPath, NULL) error\n"); perror("");
             return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
         }
     }
+#else
+    canonicalFullFsPath = StringCopy(fullFsPath);
+#endif
 
-    logger("URLPath2AbsFilePath", "canonicalFullFsPath: %s\n", canonicalFullFsPath);
+    logger("canonicalFullFsPath: %s\n", canonicalFullFsPath);
     if(!canonicalFullFsPath){
-        logger("URLPath2AbsFilePath", "Invalid canonical absolute path, does the resource exists?\n"); perror("");
+        logger("Invalid canonical absolute path, does the resource exists?\n"); perror("");
         return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
     if(strlen(canonicalFullFsPath) > MAX_PATH_LENGTH){
-        logger("URLPath2AbsFilePath", "Canonical absolute file path is too large\n"); perror("");
+        logger("Canonical absolute file path is too large\n"); perror("");
         return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
+#ifdef SANITIZE_PATH
     if(
         memcmp(canonicalFullFsPath, _baseDir,
         MIN(strlen(canonicalFullFsPath), strlen(_baseDir)))
     )
     {
-        logger("URLPath2AbsFilePath", "Path traversal detected!\n"); perror("memcmp or strlen\n");
-        logger("URLPath2AbsFilePath", "fullFsPath: %s\n", fullFsPath);
+        logger("Path traversal detected!\n"); perror("memcmp or strlen\n");
+        logger("fullFsPath: %s\n", fullFsPath);
         return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, false);
     }
 
@@ -122,7 +127,8 @@ char * URLPath2AbsFilePath(const char * const URLPath, const char * const baseDi
         strcat(canonicalFullFsPath, lastComp);
         canonicalFullFsPath[requiredLen -1] = '\0';
     }
-    logger("URLPath20AbsFilePath", "canonicalFullFsPath: %s\n", canonicalFullFsPath);
+#endif
+    logger("canonicalFullFsPath: %s\n", canonicalFullFsPath);
 
     return finishCorrectly(fullFsPath, lastComp, canonicalFullFsPath, true);
 }
@@ -145,13 +151,13 @@ HTTPResponse_t * createErrorResponse(const int errorCode){
     HTTPResponse_t * res = NULL;
     HTTPResponseLine_t * resLine = (HTTPResponseLine_t *)calloc(1, sizeof(HTTPResponseLine_t));
     HTTPBody_t * body = (HTTPBody_t *)calloc(1, sizeof(HTTPBody_t));
-    char * text = (char *)malloc(500*sizeof(char));
+    char * text = MallocString(500);
     int rc = 0;
     
-    logger("createErrorResponse", "Entering\n");
+    logger("Entering\n");
 
     if(!resLine || !body || !text){
-        logger("createErrorResponse", "Out of memory\n");
+        logger("Out of memory\n");
         die("malloc");
     }
 
@@ -159,36 +165,36 @@ HTTPResponse_t * createErrorResponse(const int errorCode){
 
     // prepare response line
     if(!ResponseLineSetProtocol(resLine, HTTP_VERSION_1_1))
-        logger("createErrorResponse", "Couldn't set the response' protocol version\n");
+        logger("Couldn't set the response' protocol version\n");
     if(!ResponseLineSetStatusCode(resLine, errorCode))
-        logger("createErrorResponse", "Couldn't set the response' status code\n");
+        logger("Couldn't set the response' status code\n");
     if(!ResponseSetResLine(res, resLine))
-        logger("createErrorResponse", "Couldn't set the response' status line\n");
+        logger("Couldn't set the response' status line\n");
 
     rc = snprintf(text, 500, "<html><head><title>Dos</title></head><body><p>%s %s</p></body></html>\0", itoa(errorCode), getStatusMessage(errorCode));
     
     if(rc < 0)
-        logger("createErrorResponse", "Couldn't create the error response page\n");
+        logger("Couldn't create the error response page\n");
     
     // headers
     if(!ResponseAddHeader(res, "Content-Length", itoa(rc)))
-        logger("createErrorResponse", "Couldn't add the response header Content-Length\n");
+        logger("Couldn't add the response header Content-Length\n");
     if(!ResponseAddHeader(res, "Content-Type", "text/html"))
-        logger("createErrorResponse", "Couldn't add the response header Content-Type\n");
+        logger("Couldn't add the response header Content-Type\n");
     if(!ResponseAddHeader(res, "Server", "Donato's web Server"))
-        logger("createErrorResponse", "Couldn't add the response header Server\n");
+        logger("Couldn't add the response header Server\n");
     if(!ResponseAddHeader(res, "Date", generateDateRFC7231()))
-        logger("createErrorResponse", "Couldn't add the response header Date\n");
+        logger("Couldn't add the response header Date\n");
     if(!ResponseAddHeader(res, "Connection", "Close"))
-        logger("createErrorResponse", "Couldn't add the response header Connection\n");
+        logger("Couldn't add the response header Connection\n");
 
     // set body
     if(!BodySetData(body, text, rc))
-        logger("createErrorResponse", "Couldn't set the response' body data\n");
+        logger("Couldn't set the response' body data\n");
     if(!ResponseAddBody(res, body))
-        logger("createErrorResponse", "Couldn't add the body to the response\n");
+        logger("Couldn't add the body to the response\n");
 
-    logger("createErrorResponse", "Exiting\n");
+    logger("Exiting\n");
 
     return res;
 }

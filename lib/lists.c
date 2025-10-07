@@ -1,11 +1,11 @@
-#include "lists.h"
-#include "lib/httpproto/httpproto.h"
-#include "common.h"
+#include <lib/lists.h>
+#include <lib/httpproto/httpproto.h>
+#include <common.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 void exampleHdlr(void){
-    logger("exampleHdlr", "Hi!\n");
+    logger("Hi!\n");
 }
 
 Dict_t creaDict(const Endpoint_t * ep, const handler_t * hdlr){
@@ -81,7 +81,7 @@ handler_t cercaHandler(const struct S_Node * list, const Endpoint_t * sample){
     if(list == NULL) return NULL;
 
     cur = list;
-    while(cur != NULL && EndpointCmpPatternPath(sample, DictGetKey(&cur->dict)) == 0){
+    while(cur != NULL && EndpointCmpPatternPath(DictGetKey(&cur->dict), sample) == 0){
         cur = cur->next;
     }
 
@@ -95,7 +95,7 @@ handler_t cercaHandler(const struct S_Node * list, const Endpoint_t * sample){
 
 void stampaDict(const struct S_Node * list){
     while(list != NULL){
-        logger("stampaDict", "key: %p, value: %p, next: %p\n", list, list->dict.key, list->dict.value, list->next);
+        logger("key: %p, value: %p, next: %p\n", list, list->dict.key, list->dict.value, list->next);
         list = list->next;
     }
     return;

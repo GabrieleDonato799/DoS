@@ -5,7 +5,13 @@
         "webserver.h": "c",
         "array": "c",
         "string_view": "c",
-        "sstream": "c"
+        "sstream": "c",
+        "fileserver.h": "c",
+        "math.h": "c",
+        "switcher.h": "c",
+        "stdlib.h": "c",
+        "stdio.h": "c",
+        "lists.h": "c"
     },
     "makefile.configureOnOpen": true
 }

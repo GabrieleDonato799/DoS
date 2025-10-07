@@ -11,12 +11,12 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <wait.h>
 #include <signal.h>
 #include <sys/time.h>
 #include <fcntl.h>
-
 
 #define LISTEN_PORT 3456
 #define MAXLEN 255
@@ -67,24 +67,39 @@ int main() {
   signal(SIGINT, handle_signal);
   signal(SIGTERM, handle_signal);
   signal(SIGCHLD, handle_signal);
+  signal(SIGABRT, handle_signal); // to log more info about double free errors
   atexit(killChildren);
   atexit(dumpLogs);
 
   // register request handlers
-  // const Endpoint_t webEp = {"/www/*", "GET"};
-  const Endpoint_t fileEpHEAD = {"/www/*", "HEAD"};
-  const Endpoint_t fileEpGET = {"/www/*", "GET"};
-  const Endpoint_t fileEpPUT = {"/www/*", "PUT"};
-  const Endpoint_t fileEpPOST = {"/www/*", "POST"};
-  const Endpoint_t fileEpDELETE = {"/www/*", "DELETE"};
-  // registerHdlr(&webEp, webSrvReqHdlr);
+  const Endpoint_t webEpGET = {"/www/*", "GET"};
+  const Endpoint_t webEpHEAD = {"/www/*", "HEAD"};
+  const Endpoint_t webEpLogin = {"/www/login", "GET"};
+  const Endpoint_t webEpLogout = {"/www/logout", "GET"};
+  const Endpoint_t fileEpHEAD = {"/files/*", "HEAD"};
+  const Endpoint_t fileEpGET = {"/files/*", "GET"};
+  const Endpoint_t fileEpPUT = {"/files/*", "PUT"};
+  const Endpoint_t fileEpPOST = {"/files/*", "POST"};
+  const Endpoint_t fileEpDELETE = {"/files/*", "DELETE"};
+  registerHdlr(&webEpGET, webSrvReqHdlr);
+  registerHdlr(&webEpHEAD, webSrvReqHdlr);
+  registerHdlr(&webEpLogin, loginReqHdlr);
+  registerHdlr(&webEpLogout, logoutReqHdlr);
   registerHdlr(&fileEpHEAD, fileSrvReqHdlr);
   registerHdlr(&fileEpGET, fileSrvReqHdlr);
   registerHdlr(&fileEpPUT, fileSrvReqHdlr);
   registerHdlr(&fileEpPOST, fileSrvReqHdlr);
   registerHdlr(&fileEpDELETE, fileSrvReqHdlr);
 
-  logger("main", "Server started\n");
+  // setup folders
+  mkdir("./logs/", "755");
+  mkdir("./jail/content/files/", "755");
+  mkdir("./jail/content/www/", "755");
+  chown("./logs/", getuid(), getgid());
+  chown("./jail/content/files/", getuid(), getgid());
+  chown("./jail/content/www/", getuid(), getgid());
+
+  logger("Server started\n");
 
   while (1) {
     int s;
@@ -99,17 +114,17 @@ int main() {
       setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
       setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-      logger("main", "Client connected!\n");
+      logger("Client connected!\n");
       if ((pid = fork()) < 0) { // error
         die("fork");
       } else if (pid == 0) { // son
-        logger("main", "I've been forked!\n");
+        logger("I've been forked!\n");
         // sockets handling & communications
         close(server);
-        connectionHandler(s, (struct sockaddr *)&s, sizeof(s));
+        connectionHandler(s, (struct sockaddr *)&saddr, sizeof(saddr));
         close(s);
         
-        logger("main", "Client disconnected!\n");
+        logger("Client disconnected!\n");
         exit(EXIT_SUCCESS);
       } else { // father
         close(s);
@@ -128,25 +143,25 @@ void killChildren(void){
   int status;
   pid_t pid;
 
-  // logger("killChildren", "Entering\n");
+  // logger("Entering\n");
 
   while((pid = waitpid(0, &status, WNOHANG)) > 0); // wait all children, then die
 
-  // logger("killChildren", "Exiting\n");
+  // logger("Exiting\n");
   
   return;
 }
 
 void handle_signal(int signum) {
-
-  logger("handle_signal", "Entering, %s\n", strsignal(signum));
+  // NOTE: the logger is not thread safe
+  // logger("Entering, %s\n", strsignal(signum));
 
   switch(signum){
     case SIGINT:
     case SIGTERM:
     {
       killChildren();
-      logger("handle_signal", "exit(EXIT_SUCCESS)\n");
+      // logger("exit(EXIT_SUCCESS)\n");
       exit(EXIT_SUCCESS);
     }
     break;
@@ -155,9 +170,15 @@ void handle_signal(int signum) {
       killChildren();
     }
     break;
+    case SIGABRT:
+    {
+      // logger("A \"double free or memory corruption\" error occured.\n");
+      _Exit(-1);
+    }
+    break;
   }
 
-  logger("handle_signal", "Exiting\n");
+  // logger("Exiting\n");
 }
 
 void connectionHandler(int client, struct sockaddr *sa, int length) {
@@ -172,33 +193,53 @@ void connectionHandler(int client, struct sockaddr *sa, int length) {
   signal(SIGTERM, SIG_DFL);
   signal(SIGCHLD, SIG_DFL);
 
-  logger("connectionHandler", "Entering\n");
+  logger("Entering\n");
 
   // logging to a per worker file
   snprintf(logName, 25, "logs/child_%d.log", getpid());
   freopen(logName, "w", stdout);
   freopen(logName, "w", stderr);
 
+  logger("uid : %d  euid : %d\n", getuid(), geteuid());
+  // chroot to mitigate path traversals
+  if(chroot("./jail/") < 0){
+    logger("Could chroot() to the jail folder\n"); perror("chroot");
+  };
+  if(chdir("/") < 0){
+    logger("Could chdir() to the jail folder\n"); perror("chdir");
+  };
+  setuid(getuid()); // relinquish privileges
+
+  logger("uid : %d  euid : %d\n", getuid(), geteuid());
+
   req = RequestParse(client);
-  ep = RequestGetEndpoint(req);
+  if(!req){
+    res = createErrorResponse(400);
+  }
+  else{
+    ep = RequestGetEndpoint(req);
   
-  logger("connectionHandler", "ep->method: %s, ep->path: %s\n", ep->method, ep->path);
-  
-  printRegisteredHdlrs();
-  handler = switcher(ep);
-  if(handler)
-    res = handler(req);
-  else
-    logger("connectionHandler", "Invalid request handler: %p!\n", handler);
+    logger("ep->method: %s, ep->path: %s\n", ep->method, ep->path);
+    
+    // printRegisteredHdlrs();
+    handler = switcher(ep);
+    if(handler)
+      res = handler(req);
+    else{
+      logger("Invalid request handler: %p!\n", handler);
+      res = createErrorResponse(404);
+    }
 
-  if(!res)
-    res = createErrorResponse(500);
-
-  if(!ResponseSend(res, client)){
-    logger("connectionHandler", "Couldn't send the response\n");
+    if(!res)
+      res = createErrorResponse(500);
+    
+    freeRequest(req);
   }
 
-  freeRequest(req);
+  if(!ResponseSend(res, client)){
+    logger("Couldn't send the response\n");
+  }
+  
   freeResponse(res);
 
   return;

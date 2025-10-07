@@ -1,0 +1,51 @@
+<html>
+    <head>
+        <title>Dos</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-LN+7fdVzj6u52u30Kp6M/trliBMCMKTyK833zpbD+pXdCLuTusPj697FH4R/5mcr" crossorigin="anonymous">
+    </head>
+
+    <body>
+        <div class="container">
+            <div class="row">
+                <div class="col">
+                    <h1>Login!</h1>
+                    <form id="reqForm" action="#">
+                        <label class="form-label">Username</label>
+                        <input type="text" name="user" value="user" class="form-control"><br>
+                        <label class="form-label">Password</label>
+                        <input type="password" name="password" value="^P4s5w0rd$" class="form-control"><br>
+                        <button type="button" name="submit" onclick="send(); return false;" class="btn btn-primary">Submit</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </body>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.bundle.min.js" integrity="sha384-ndDqU0Gzau9qJ1lfW4pNLlhNTkCfHzAVBReH9diLvGRem5+R9g2FzA8ZGN954O5Q" crossorigin="anonymous"></script>
+    <script src="lib.js"></script>
+    <script>
+        function send(){
+            let username = document.getElementsByName("user")[0].value
+            let password = document.getElementsByName("password")[0].value
+
+            if(username === "user" && password === "^P4s5w0rd$"){
+                let optionsGET = {
+                    // credentials: 'include',
+                    method: 'GET',
+                    header: {
+                        "Content-Type": "application/text"
+                    }
+                }
+
+                fetch(`${baseURL}/www/login`, optionsGET)
+                    .then(response => {
+                        console.log(response);
+                        setTimeout(() => {
+                            document.location.href = "/www/index.html"
+                        }, 250);
+                })
+                .catch(_ => {console.error(_)})
+            }
+        }
+    </script>
+</html>
